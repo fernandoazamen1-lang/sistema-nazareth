@@ -7,7 +7,18 @@ from datetime import date, datetime
 import calendar
 import plotly.graph_objects as go
 import plotly.express as px
+st.set_page_config(
+    page_title="Tablero Ejecutivo y Financiero - Iglesia Nazareth", 
+    page_icon="⛪", 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
 
+# 1. BLOQUEAR ACCESO SI NO HAY LOGIN
+core.requerir_login()
+
+# 2. Estilos visuales
+core.aplicar_estilos_base()
 # ReportLab para la emisión formal ejecutiva
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
