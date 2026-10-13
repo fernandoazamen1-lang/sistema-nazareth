@@ -36,7 +36,7 @@ def validar_login(usuario: str, password_plana: str):
     u_limpio = usuario.strip().lower()
     p_hash = encriptar_clave(password_plana)
     
-    # Auto-sincronización garantizada del usuario administrador inicial
+    # Auto-sincronización del usuario inicial
     if u_limpio == "admin" and password_plana.strip() == "Nazareth2026*":
         try:
             with get_db() as conn:
@@ -372,8 +372,10 @@ div[data-baseweb="input"] input:focus, div[data-baseweb="select"]:focus-within {
     box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important; 
 }
 </style>
-"""
+""", unsafe_allow_html=True)
     st.markdown(css_string, unsafe_allow_html=True)
+
+    # El banner de la iglesia se muestra UNA SOLA VEZ aquí
     st.markdown("""
 <div style="background: #FFFFFF; padding: 14px 22px; border-radius: 14px; display: flex; align-items: center; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px;">
 <div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 16px; border: 1px solid #DBEAFE;">⛪</div>
@@ -406,42 +408,3 @@ def selector_periodo(clave):
     num_m = MESES_NUM[mes]
     dia_def = min(date.today().day, calendar.monthrange(anio, num_m)[1])
     return anio, mes, num_m, date(anio, num_m, dia_def)
-
-def inicializar_bd():
-    queries = """
-    CREATE TABLE IF NOT EXISTS miembros (
-        id_miembro TEXT PRIMARY KEY,
-        nombre TEXT,
-        telefono TEXT,
-        direccion TEXT DEFAULT '',
-        fecha_nacimiento TEXT DEFAULT '',
-        estado_civil TEXT DEFAULT 'Soltero(a)',
-        bautizado TEXT DEFAULT 'No',
-        miembro_pleno TEXT DEFAULT 'No',
-        cargo_eclesiastico TEXT DEFAULT 'Miembro Activo',
-        foto TEXT DEFAULT '',
-        fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS diezmos (id SERIAL PRIMARY KEY, fecha TEXT, id_miembro TEXT, nombre_miembro TEXT, mes TEXT, medio TEXT, monto REAL, detalle TEXT, codigo_comprobante TEXT DEFAULT '');
-    CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, fecha TEXT, tipo TEXT, categoria TEXT, subcategoria TEXT, fondo TEXT DEFAULT 'General', monto REAL, medio TEXT, comprobante TEXT, detalle TEXT, responsable TEXT, archivo_foto TEXT, estado_credito TEXT DEFAULT 'Cobrado');
-    CREATE TABLE IF NOT EXISTS cierres_mensuales (id SERIAL PRIMARY KEY, periodo TEXT UNIQUE, fecha_cierre TEXT, saldo_ini_efectivo REAL, saldo_ini_banco REAL, ingresos_efectivo REAL, ingresos_banco REAL, egresos_efectivo REAL, egresos_banco REAL, saldo_fin_efectivo REAL, saldo_fin_banco REAL, saldo_cierre REAL DEFAULT 0.0, usuario TEXT DEFAULT 'Tesorería General', estado TEXT DEFAULT 'Abierto');
-    CREATE TABLE IF NOT EXISTS rubros_catalogo (id SERIAL PRIMARY KEY, tipo TEXT, categoria TEXT, subcategoria TEXT);
-    CREATE TABLE IF NOT EXISTS responsables_catalogo (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE);
-    CREATE TABLE IF NOT EXISTS fondos_catalogo (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE);
-    CREATE TABLE IF NOT EXISTS presupuestos (id SERIAL PRIMARY KEY, periodo TEXT, categoria TEXT, monto_presupuestado REAL, UNIQUE(periodo, categoria));
-    CREATE TABLE IF NOT EXISTS auditoria (id SERIAL PRIMARY KEY, fecha_hora TEXT, modulo TEXT, accion TEXT, descripcion TEXT);
-    CREATE TABLE IF NOT EXISTS pagos_programados (id SERIAL PRIMARY KEY, titulo TEXT, categoria TEXT, subcategoria TEXT, fondo TEXT, monto REAL, medio TEXT, responsable TEXT, periodicidad TEXT, momento_corte TEXT, dia_fijo INTEGER, fecha_proximo_pago TEXT, ultimo_pago TEXT, estado TEXT DEFAULT 'Pendiente');
-    CREATE TABLE IF NOT EXISTS foro_recordatorios (id SERIAL PRIMARY KEY, fecha_creacion TEXT, autor TEXT, titulo TEXT, contenido TEXT, fecha_limite TEXT, prioridad TEXT, leido INTEGER DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS actividades (id SERIAL PRIMARY KEY, nombre TEXT, fecha TEXT, responsable TEXT, descripcion TEXT, ultima_fecha_corte TEXT DEFAULT '', estado TEXT DEFAULT 'Activa');
-    CREATE TABLE IF NOT EXISTS actividad_movimientos (id SERIAL PRIMARY KEY, id_actividad INTEGER, fecha TEXT, tipo TEXT, concepto TEXT, monto REAL, condicion TEXT, cliente_deudor TEXT, estado_cobro TEXT, medio TEXT, fondo_destino TEXT, liquidado INTEGER DEFAULT 0, fecha_corte TEXT DEFAULT '');
-    CREATE TABLE IF NOT EXISTS planilla_pastoral (id SERIAL PRIMARY KEY, codigo_voucher TEXT UNIQUE, fecha_pago TEXT, periodo_mes TEXT, periodo_anio INTEGER, pastor_nombre TEXT, sueldo_bruto REAL, pct_afp REAL, monto_afp REAL, pct_essalud REAL, monto_essalud REAL, neto_pagado REAL, costo_total REAL, medio_pago TEXT, fondo TEXT, detalle TEXT, estado TEXT DEFAULT 'Pagado');
-    CREATE TABLE IF NOT EXISTS config_iglesia (clave TEXT PRIMARY KEY, valor TEXT);
-    CREATE TABLE IF NOT EXISTS usuarios_sistema (id SERIAL PRIMARY KEY, usuario TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, nombre TEXT NOT NULL, rol TEXT DEFAULT 'Administrador', activo BOOLEAN DEFAULT TRUE, fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-    """
-    try:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(queries)
-            conn.commit()
-    except Exception as e:
-        print(f"Error de inicialización: {e}")
