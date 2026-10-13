@@ -36,7 +36,7 @@ def validar_login(usuario: str, password_plana: str):
     u_limpio = usuario.strip().lower()
     p_hash = encriptar_clave(password_plana)
     
-    # Auto-sincronización del usuario inicial
+    # Auto-sincronización garantizada del usuario administrador
     if u_limpio == "admin" and password_plana.strip() == "Nazareth2026*":
         try:
             with get_db() as conn:
@@ -372,10 +372,10 @@ div[data-baseweb="input"] input:focus, div[data-baseweb="select"]:focus-within {
     box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important; 
 }
 </style>
-""", unsafe_allow_html=True)
+"""
     st.markdown(css_string, unsafe_allow_html=True)
 
-    # El banner de la iglesia se muestra UNA SOLA VEZ aquí
+    # Tarjeta de identidad institucional única
     st.markdown("""
 <div style="background: #FFFFFF; padding: 14px 22px; border-radius: 14px; display: flex; align-items: center; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px;">
 <div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 16px; border: 1px solid #DBEAFE;">⛪</div>
@@ -408,3 +408,6 @@ def selector_periodo(clave):
     num_m = MESES_NUM[mes]
     dia_def = min(date.today().day, calendar.monthrange(anio, num_m)[1])
     return anio, mes, num_m, date(anio, num_m, dia_def)
+
+def inicializar_bd():
+    pass
