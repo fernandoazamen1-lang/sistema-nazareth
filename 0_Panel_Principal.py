@@ -25,13 +25,6 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 
-st.set_page_config(
-    page_title="Tablero Ejecutivo y Financiero - Iglesia Nazareth", 
-    page_icon="⛪", 
-    layout="wide", 
-    initial_sidebar_state="expanded"
-)
-
 # Estilos visuales globales y banner institucional
 core.aplicar_estilos_base()
 
