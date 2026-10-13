@@ -162,54 +162,41 @@ def aplicar_estilos_base():
     verificar_licencia()
     css_string = """
 <style translate="no">
-/* 1. Ocultar únicamente el menú de 3 puntos, botón Deploy y footer nativo */
+/* 1. Ocultar toolbar nativo, botón Deploy y footer */
 #MainMenu, footer, .stDeployButton, [data-testid="stToolbar"] { 
     display: none !important; 
     visibility: hidden !important; 
 }
 
-/* 2. Mantener header transparente para que los botones de navegación existan */
-header[data-testid="stHeader"], header {
+/* 2. Header transparente pero activo para no romper controles nativos */
+header[data-testid="stHeader"] {
     background: transparent !important;
-    display: block !important;
-    visibility: visible !important;
 }
 
-/* 3. Forzar que el botón de la flecha lateral siempre sea visible, azul y fácil de presionar */
-div[data-testid="collapsedControl"], [data-testid="collapsedControl"] {
+/* 3. Botón de abrir la barra lateral siempre visible, azul y al frente */
+[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"] {
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
-    z-index: 999999 !important;
     position: fixed !important;
-    top: 12px !important;
-    left: 12px !important;
+    top: 10px !important;
+    left: 10px !important;
+    z-index: 999999 !important;
     background: #1E40AF !important;
     border-radius: 8px !important;
-    padding: 6px !important;
-    box-shadow: 0 4px 10px rgba(30, 64, 175, 0.4) !important;
-    cursor: pointer !important;
+    box-shadow: 0 4px 12px rgba(30, 64, 175, 0.4) !important;
 }
-
-div[data-testid="collapsedControl"] svg, [data-testid="collapsedControl"] svg {
+[data-testid="stSidebarCollapsedControl"] svg, [data-testid="collapsedControl"] svg {
     fill: #FFFFFF !important;
     stroke: #FFFFFF !important;
     color: #FFFFFF !important;
-    width: 22px !important;
-    height: 22px !important;
 }
 
-html, body, [class*="css"], .stApp { 
-    font-family: 'Inter', -apple-system, sans-serif !important; 
-    background: linear-gradient(135deg, #F8FAFC 0%, #E0E7FF 100%) !important; 
-    color: #0F172A !important; 
-    background-attachment: fixed !important; 
-}
+/* 4. Estilos de la barra lateral */
 [data-testid="stSidebar"] { 
     background: #FFFFFF !important; 
     border-right: 1px solid #E2E8F0 !important; 
     box-shadow: 4px 0 15px rgba(15, 23, 42, 0.03) !important; 
-    margin-top: 0px !important; 
 }
 [data-testid="stSidebarNav"] span { 
     font-size: 13.5px !important; 
@@ -223,6 +210,14 @@ html, body, [class*="css"], .stApp {
 [data-testid="stSidebarNav"] [aria-current="page"] span { 
     font-weight: 800 !important; 
     color: #1E40AF !important; 
+}
+
+/* 5. Estilos de página y tarjetas */
+html, body, [class*="css"], .stApp { 
+    font-family: 'Inter', -apple-system, sans-serif !important; 
+    background: linear-gradient(135deg, #F8FAFC 0%, #E0E7FF 100%) !important; 
+    color: #0F172A !important; 
+    background-attachment: fixed !important; 
 }
 div[data-testid="stMetric"] { 
     background: rgba(255, 255, 255, 0.85) !important; 
@@ -324,26 +319,23 @@ div[data-baseweb="input"] input:focus, div[data-baseweb="select"]:focus-within {
 </style>
 """
     st.markdown(css_string, unsafe_allow_html=True)
-    
-    # Script para reabrir automáticamente la barra lateral al terminar la carga
+
+    # Limpia la memoria de colapso en el navegador para que vuelva a abrirse
     components.html("""
     <script>
-        function asegurarSidebarAbierto() {
-            try {
-                const doc = window.parent.document;
-                const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
-                const btnAbrir = doc.querySelector('[data-testid="collapsedControl"]');
-                
-                if (btnAbrir && (!sidebar || sidebar.getAttribute('aria-expanded') === 'false')) {
-                    btnAbrir.click();
+        try {
+            const w = window.parent;
+            for (let k in w.localStorage) {
+                if (k.toLowerCase().includes('sidebar')) {
+                    w.localStorage.removeItem(k);
                 }
-            } catch (e) {}
-        }
-        setTimeout(asegurarSidebarAbierto, 600);
-        setTimeout(asegurarSidebarAbierto, 1500);
+            }
+            const btn = w.document.querySelector('[data-testid="stSidebarCollapsedControl"] button, [data-testid="collapsedControl"] button');
+            if (btn) { btn.click(); }
+        } catch(e) {}
     </script>
     """, height=0, width=0)
-    
+
     st.markdown("""
 <div style="background: #FFFFFF; padding: 14px 22px; border-radius: 14px; display: flex; align-items: center; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px;">
 <div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 16px; border: 1px solid #DBEAFE;">⛪</div>
