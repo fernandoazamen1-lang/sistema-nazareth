@@ -143,57 +143,23 @@ def registrar_log(modulo, accion, descripcion):
     query_db("INSERT INTO auditoria (fecha_hora, modulo, accion, descripcion) VALUES (%s, %s, %s, %s)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), modulo, accion, descripcion))
 
 # ==============================================================================
-# DISEÑO Y ESTILOS GLOBALES PREMIUM
+# DISEÑO Y ESTILOS GLOBALES
 # ==============================================================================
 def aplicar_estilos_base():
     verificar_licencia()
     css_string = """
 <style translate="no">
-/* 1. Ocultar toolbar nativo, botón Deploy y footer */
-#MainMenu, footer, .stDeployButton, [data-testid="stToolbar"] { 
-    display: none !important; 
-    visibility: hidden !important; 
-}
+/* 1. Ocultar los botones innecesarios de Streamlit sin romper el header ni la flecha */
+#MainMenu { visibility: hidden !important; }
+footer { visibility: hidden !important; }
+.stDeployButton { display: none !important; }
 
-/* 2. Dejar el header normal sin bloquear clics */
+/* 2. Mantener el header transparente para que la flecha nativa (>) sea 100% visible y cliqueable */
 header[data-testid="stHeader"] {
-    background: transparent !important;
-    pointer-events: none !important;
+    background-color: transparent !important;
 }
 
-/* 3. Reactivar clics y forzar visibilidad permanente del botón de expansión */
-header[data-testid="stHeader"] button,
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"] {
-    pointer-events: auto !important;
-    display: inline-flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-}
-
-[data-testid="stSidebarCollapsedControl"] {
-    position: fixed !important;
-    top: 14px !important;
-    left: 14px !important;
-    z-index: 100000 !important;
-}
-
-[data-testid="stSidebarCollapsedControl"] button {
-    background: #1E40AF !important;
-    color: #FFFFFF !important;
-    border-radius: 8px !important;
-    padding: 6px 10px !important;
-    box-shadow: 0 4px 12px rgba(30, 64, 175, 0.4) !important;
-    border: none !important;
-}
-
-[data-testid="stSidebarCollapsedControl"] button svg {
-    fill: #FFFFFF !important;
-    stroke: #FFFFFF !important;
-    color: #FFFFFF !important;
-}
-
-/* 4. Estilos de navegación de la barra lateral */
+/* 3. Estilos de la barra lateral */
 [data-testid="stSidebar"] { 
     background: #FFFFFF !important; 
     border-right: 1px solid #E2E8F0 !important; 
@@ -213,7 +179,7 @@ header[data-testid="stHeader"] button,
     color: #1E40AF !important; 
 }
 
-/* 5. Fondo general y componentes */
+/* 4. Estilos de página y tarjetas */
 html, body, [class*="css"], .stApp { 
     font-family: 'Inter', -apple-system, sans-serif !important; 
     background: linear-gradient(135deg, #F8FAFC 0%, #E0E7FF 100%) !important; 
@@ -377,7 +343,7 @@ def inicializar_bd():
     CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, fecha TEXT, tipo TEXT, categoria TEXT, subcategoria TEXT, fondo TEXT DEFAULT 'General', monto REAL, medio TEXT, comprobante TEXT, detalle TEXT, responsable TEXT, archivo_foto TEXT, estado_credito TEXT DEFAULT 'Cobrado');
     CREATE TABLE IF NOT EXISTS cierres_mensuales (id SERIAL PRIMARY KEY, periodo TEXT UNIQUE, fecha_cierre TEXT, saldo_ini_efectivo REAL, saldo_ini_banco REAL, ingresos_efectivo REAL, ingresos_banco REAL, egresos_efectivo REAL, egresos_banco REAL, saldo_fin_efectivo REAL, saldo_fin_banco REAL, saldo_cierre REAL DEFAULT 0.0, usuario TEXT DEFAULT 'Tesorería General', estado TEXT DEFAULT 'Abierto');
     CREATE TABLE IF NOT EXISTS rubros_catalogo (id SERIAL PRIMARY KEY, tipo TEXT, categoria TEXT, subcategoria TEXT);
-    CREATE TABLE IF NOT EXISTS responsables_catalogo (id SERIAL BASE PRIMARY KEY, nombre TEXT UNIQUE);
+    CREATE TABLE IF NOT EXISTS responsables_catalogo (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE);
     CREATE TABLE IF NOT EXISTS fondos_catalogo (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE);
     CREATE TABLE IF NOT EXISTS presupuestos (id SERIAL PRIMARY KEY, periodo TEXT, categoria TEXT, monto_presupuestado REAL, UNIQUE(periodo, categoria));
     CREATE TABLE IF NOT EXISTS auditoria (id SERIAL PRIMARY KEY, fecha_hora TEXT, modulo TEXT, accion TEXT, descripcion TEXT);
