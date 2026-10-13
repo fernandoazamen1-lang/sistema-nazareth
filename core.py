@@ -6,7 +6,6 @@ from datetime import datetime, date
 import calendar
 import re
 import streamlit as st
-import streamlit.components.v1 as components
 
 # ==============================================================================
 # LIBRERÍAS PARA COMPRESIÓN Y SUBIDA A LA NUBE
@@ -41,30 +40,20 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 def comprimir_y_subir_foto(archivo_subido, nombre_base):
-    """
-    Recibe un archivo de imagen, lo comprime a máx 800x800, baja el peso radicalmente
-    y lo sube al bucket 'archivos_iglesia'. Retorna la URL pública de la imagen.
-    """
     if archivo_subido is None:
         return ""
     
     try:
-        # 1. Abrir la imagen
         img = Image.open(archivo_subido)
-        
-        # 2. Convertir a RGB (previene errores si suben PNG transparentes)
         if img.mode != 'RGB':
             img = img.convert('RGB')
         
-        # 3. Redimensionar manteniendo proporciones (máximo 800x800 px)
         img.thumbnail((800, 800))
         
-        # 4. Guardar y comprimir en la memoria temporal
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=75, optimize=True)
         byte_data = buf.getvalue()
         
-        # 5. Generar un nombre único y subir a Supabase
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         ruta_supabase = f"fotos_miembros/{nombre_base}_{timestamp}.jpg"
         
@@ -74,9 +63,7 @@ def comprimir_y_subir_foto(archivo_subido, nombre_base):
             file_options={"content-type": "image/jpeg"}
         )
         
-        # 6. Retornar el enlace directo a la foto
-        url_publica = supabase.storage.from_("archivos_iglesia").get_public_url(ruta_supabase)
-        return url_publica
+        return supabase.storage.from_("archivos_iglesia").get_public_url(ruta_supabase)
         
     except Exception as e:
         st.error(f"⚠️ Error al procesar y subir la foto: {e}")
@@ -168,31 +155,45 @@ def aplicar_estilos_base():
     visibility: hidden !important; 
 }
 
-/* 2. Header transparente pero activo para no romper controles nativos */
+/* 2. Dejar el header normal sin bloquear clics */
 header[data-testid="stHeader"] {
     background: transparent !important;
+    pointer-events: none !important;
 }
 
-/* 3. Botón de abrir la barra lateral siempre visible, azul y al frente */
-[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"] {
-    display: flex !important;
+/* 3. Reactivar clics y forzar visibilidad permanente del botón de expansión */
+header[data-testid="stHeader"] button,
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    pointer-events: auto !important;
+    display: inline-flex !important;
     visibility: visible !important;
     opacity: 1 !important;
-    position: fixed !important;
-    top: 10px !important;
-    left: 10px !important;
-    z-index: 999999 !important;
-    background: #1E40AF !important;
-    border-radius: 8px !important;
-    box-shadow: 0 4px 12px rgba(30, 64, 175, 0.4) !important;
 }
-[data-testid="stSidebarCollapsedControl"] svg, [data-testid="collapsedControl"] svg {
+
+[data-testid="stSidebarCollapsedControl"] {
+    position: fixed !important;
+    top: 14px !important;
+    left: 14px !important;
+    z-index: 100000 !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] button {
+    background: #1E40AF !important;
+    color: #FFFFFF !important;
+    border-radius: 8px !important;
+    padding: 6px 10px !important;
+    box-shadow: 0 4px 12px rgba(30, 64, 175, 0.4) !important;
+    border: none !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] button svg {
     fill: #FFFFFF !important;
     stroke: #FFFFFF !important;
     color: #FFFFFF !important;
 }
 
-/* 4. Estilos de la barra lateral */
+/* 4. Estilos de navegación de la barra lateral */
 [data-testid="stSidebar"] { 
     background: #FFFFFF !important; 
     border-right: 1px solid #E2E8F0 !important; 
@@ -212,13 +213,14 @@ header[data-testid="stHeader"] {
     color: #1E40AF !important; 
 }
 
-/* 5. Estilos de página y tarjetas */
+/* 5. Fondo general y componentes */
 html, body, [class*="css"], .stApp { 
     font-family: 'Inter', -apple-system, sans-serif !important; 
     background: linear-gradient(135deg, #F8FAFC 0%, #E0E7FF 100%) !important; 
     color: #0F172A !important; 
     background-attachment: fixed !important; 
 }
+
 div[data-testid="stMetric"] { 
     background: rgba(255, 255, 255, 0.85) !important; 
     backdrop-filter: blur(10px) !important; 
@@ -246,6 +248,7 @@ div[data-testid="stMetricValue"] {
     color: #0F172A !important; 
     margin-top: 2px !important; 
 }
+
 .stTabs [data-baseweb="tab-list"] { 
     gap: 12px !important; 
     border-bottom: none !important; 
@@ -275,6 +278,7 @@ div[data-testid="stMetricValue"] {
     box-shadow: 0 4px 12px rgba(30, 58, 138, 0.35) !important; 
     transform: translateY(-2px); 
 }
+
 div[data-testid="stForm"], div[data-testid="stExpander"] { 
     background: rgba(255, 255, 255, 0.9) !important; 
     backdrop-filter: blur(10px) !important; 
@@ -283,6 +287,7 @@ div[data-testid="stForm"], div[data-testid="stExpander"] {
     padding: 22px !important; 
     box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03) !important; 
 }
+
 button[kind="primary"] { 
     background: linear-gradient(135deg, #1E40AF, #1E3A8A) !important; 
     border: none !important; 
@@ -306,6 +311,7 @@ button[kind="secondary"] {
     color: #334155 !important; 
     box-shadow: 0 2px 4px rgba(15, 23, 42, 0.02) !important; 
 }
+
 div[data-baseweb="input"] input, div[data-baseweb="select"] { 
     border-radius: 9px !important; 
     font-size: 13.5px !important; 
@@ -319,23 +325,6 @@ div[data-baseweb="input"] input:focus, div[data-baseweb="select"]:focus-within {
 </style>
 """
     st.markdown(css_string, unsafe_allow_html=True)
-
-    # Limpia la memoria de colapso en el navegador para que vuelva a abrirse
-    components.html("""
-    <script>
-        try {
-            const w = window.parent;
-            for (let k in w.localStorage) {
-                if (k.toLowerCase().includes('sidebar')) {
-                    w.localStorage.removeItem(k);
-                }
-            }
-            const btn = w.document.querySelector('[data-testid="stSidebarCollapsedControl"] button, [data-testid="collapsedControl"] button');
-            if (btn) { btn.click(); }
-        } catch(e) {}
-    </script>
-    """, height=0, width=0)
-
     st.markdown("""
 <div style="background: #FFFFFF; padding: 14px 22px; border-radius: 14px; display: flex; align-items: center; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px;">
 <div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 16px; border: 1px solid #DBEAFE;">⛪</div>
@@ -388,7 +377,7 @@ def inicializar_bd():
     CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, fecha TEXT, tipo TEXT, categoria TEXT, subcategoria TEXT, fondo TEXT DEFAULT 'General', monto REAL, medio TEXT, comprobante TEXT, detalle TEXT, responsable TEXT, archivo_foto TEXT, estado_credito TEXT DEFAULT 'Cobrado');
     CREATE TABLE IF NOT EXISTS cierres_mensuales (id SERIAL PRIMARY KEY, periodo TEXT UNIQUE, fecha_cierre TEXT, saldo_ini_efectivo REAL, saldo_ini_banco REAL, ingresos_efectivo REAL, ingresos_banco REAL, egresos_efectivo REAL, egresos_banco REAL, saldo_fin_efectivo REAL, saldo_fin_banco REAL, saldo_cierre REAL DEFAULT 0.0, usuario TEXT DEFAULT 'Tesorería General', estado TEXT DEFAULT 'Abierto');
     CREATE TABLE IF NOT EXISTS rubros_catalogo (id SERIAL PRIMARY KEY, tipo TEXT, categoria TEXT, subcategoria TEXT);
-    CREATE TABLE IF NOT EXISTS responsables_catalogo (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE);
+    CREATE TABLE IF NOT EXISTS responsables_catalogo (id SERIAL BASE PRIMARY KEY, nombre TEXT UNIQUE);
     CREATE TABLE IF NOT EXISTS fondos_catalogo (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE);
     CREATE TABLE IF NOT EXISTS presupuestos (id SERIAL PRIMARY KEY, periodo TEXT, categoria TEXT, monto_presupuestado REAL, UNIQUE(periodo, categoria));
     CREATE TABLE IF NOT EXISTS auditoria (id SERIAL PRIMARY KEY, fecha_hora TEXT, modulo TEXT, accion TEXT, descripcion TEXT);
