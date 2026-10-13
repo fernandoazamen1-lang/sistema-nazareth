@@ -33,16 +33,22 @@ def encriptar_clave(password: str) -> str:
     return hashlib.sha256(password.strip().encode("utf-8")).hexdigest()
 
 def validar_login(usuario: str, password_plana: str):
+    """Consulta la base de datos en tiempo real sin caché."""
     try:
         p_hash = encriptar_clave(password_plana)
-        df_u = read_db(
-            "SELECT usuario, nombre, rol FROM usuarios_sistema WHERE usuario = %s AND password_hash = %s AND activo = TRUE",
-            (usuario.strip().lower(), p_hash)
-        )
-        if not df_u.empty:
-            return df_u.iloc[0].to_dict()
+        u_limpio = usuario.strip().lower()
+        
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT usuario, nombre, rol FROM usuarios_sistema WHERE LOWER(TRIM(usuario)) = %s AND password_hash = %s AND activo = TRUE",
+                    (u_limpio, p_hash)
+                )
+                fila = cur.fetchone()
+                if fila:
+                    return dict(fila)
     except Exception as e:
-        st.error(f"Error de autenticación: {e}")
+        st.error(f"Error de conexión al autenticar: {e}")
     return None
 
 def requerir_login():
@@ -51,7 +57,7 @@ def requerir_login():
         st.session_state["usuario_actual"] = None
 
     if not st.session_state["autenticado"]:
-        # Ocultar menú lateral mientras no se haya iniciado sesión
+        # Ocultar menú lateral y controles hasta que se inicie sesión
         st.markdown("""
         <style>
             [data-testid="stSidebar"], [data-testid="collapsedControl"], header { display: none !important; }
@@ -162,7 +168,7 @@ def es_periodo_cerrado(fecha_param):
 def query_db(query, params=(), commit=True):
     q_limpia = query.strip().upper()
     es_modificacion = q_limpia.startswith("INSERT") or q_limpia.startswith("UPDATE") or q_limpia.startswith("DELETE")
-    tablas_exentas = ["CIERRES_MENSUALES", "AUDITORIA", "CONFIG_IGLESIA", "FONDOS_CATALOGO", "RESPONSABLES_CATALOGO", "RUBROS_CATALOGO"]
+    tablas_exentas = ["CIERRES_MENSUALES", "AUDITORIA", "CONFIG_IGLESIA", "FONDOS_CATALOGO", "RESPONSABLES_CATALOGO", "RUBROS_CATALOGO", "USUARIOS_SISTEMA"]
     es_exenta = any(t in q_limpia for t in tablas_exentas)
     
     if es_modificacion and not es_exenta:
