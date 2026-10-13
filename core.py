@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime, date
 import calendar
 import re
+import hashlib
 import streamlit as st
 
 # ==============================================================================
@@ -23,10 +24,75 @@ MESES_NUM = {m: i + 1 for i, m in enumerate(MESES)}
 MESES_NOMBRES = {v: k for k, v in MESES_NUM.items()}
 
 # ==============================================================================
-# SEGURIDAD (Desactivada para migrar a Sistema SaaS con Login)
+# SEGURIDAD Y LOGIN
 # ==============================================================================
 def verificar_licencia():
     pass 
+
+def encriptar_clave(password: str) -> str:
+    return hashlib.sha256(password.strip().encode("utf-8")).hexdigest()
+
+def validar_login(usuario: str, password_plana: str):
+    try:
+        p_hash = encriptar_clave(password_plana)
+        df_u = read_db(
+            "SELECT usuario, nombre, rol FROM usuarios_sistema WHERE usuario = %s AND password_hash = %s AND activo = TRUE",
+            (usuario.strip().lower(), p_hash)
+        )
+        if not df_u.empty:
+            return df_u.iloc[0].to_dict()
+    except Exception as e:
+        st.error(f"Error de autenticación: {e}")
+    return None
+
+def requerir_login():
+    if "autenticado" not in st.session_state:
+        st.session_state["autenticado"] = False
+        st.session_state["usuario_actual"] = None
+
+    if not st.session_state["autenticado"]:
+        # Ocultar menú lateral mientras no se haya iniciado sesión
+        st.markdown("""
+        <style>
+            [data-testid="stSidebar"], [data-testid="collapsedControl"], header { display: none !important; }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        col_espacio, col_form, col_espacio2 = st.columns([1, 1.8, 1])
+        with col_form:
+            st.markdown("""
+            <div style="background: #FFFFFF; padding: 30px; border-radius: 18px; border: 1px solid #E2E8F0; box-shadow: 0 10px 25px rgba(15,23,42,0.06); margin-top: 45px;">
+                <div style="text-align: center; font-size: 38px; margin-bottom: 8px;">⛪</div>
+                <h3 style="color: #1E3A8A; text-align: center; margin-bottom: 2px; font-weight: 800;">Sistema Nazareth</h3>
+                <p style="text-align: center; font-size: 13px; color: #64748B; margin-bottom: 25px;">Acceso Gerencial y Administrativo</p>
+            """, unsafe_allow_html=True)
+
+            with st.form("form_login"):
+                u_in = st.text_input("Usuario", placeholder="Ingresa tu usuario")
+                p_in = st.text_input("Contraseña", type="password", placeholder="Ingresa tu contraseña")
+                btn_entrar = st.form_submit_button("Iniciar Sesión", type="primary", use_container_width=True)
+
+                if btn_entrar:
+                    datos_user = validar_login(u_in, p_in)
+                    if datos_user:
+                        st.session_state["autenticado"] = True
+                        st.session_state["usuario_actual"] = datos_user
+                        st.rerun()
+                    else:
+                        st.error("❌ Usuario o contraseña incorrectos.")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+        st.stop()
+    else:
+        # Perfil y botón para cerrar sesión en la barra lateral
+        with st.sidebar:
+            st.markdown(f"👤 **{st.session_state['usuario_actual']['nombre']}**")
+            st.caption(f"Rol: {st.session_state['usuario_actual']['rol']}")
+            if st.button("🚪 Cerrar Sesión", use_container_width=True):
+                st.session_state["autenticado"] = False
+                st.session_state["usuario_actual"] = None
+                st.rerun()
+            st.markdown("---")
 
 # ==============================================================================
 # CONEXIÓN A BASE DE DATOS Y STORAGE EN LA NUBE (SUPABASE)
@@ -149,17 +215,14 @@ def aplicar_estilos_base():
     verificar_licencia()
     css_string = """
 <style translate="no">
-/* 1. Ocultar los botones innecesarios de Streamlit sin romper el header ni la flecha */
 #MainMenu { visibility: hidden !important; }
 footer { visibility: hidden !important; }
 .stDeployButton { display: none !important; }
 
-/* 2. Mantener el header transparente para que la flecha nativa (>) sea 100% visible y cliqueable */
 header[data-testid="stHeader"] {
     background-color: transparent !important;
 }
 
-/* 3. Estilos de la barra lateral */
 [data-testid="stSidebar"] { 
     background: #FFFFFF !important; 
     border-right: 1px solid #E2E8F0 !important; 
@@ -179,7 +242,6 @@ header[data-testid="stHeader"] {
     color: #1E40AF !important; 
 }
 
-/* 4. Estilos de página y tarjetas */
 html, body, [class*="css"], .stApp { 
     font-family: 'Inter', -apple-system, sans-serif !important; 
     background: linear-gradient(135deg, #F8FAFC 0%, #E0E7FF 100%) !important; 
@@ -353,6 +415,7 @@ def inicializar_bd():
     CREATE TABLE IF NOT EXISTS actividad_movimientos (id SERIAL PRIMARY KEY, id_actividad INTEGER, fecha TEXT, tipo TEXT, concepto TEXT, monto REAL, condicion TEXT, cliente_deudor TEXT, estado_cobro TEXT, medio TEXT, fondo_destino TEXT, liquidado INTEGER DEFAULT 0, fecha_corte TEXT DEFAULT '');
     CREATE TABLE IF NOT EXISTS planilla_pastoral (id SERIAL PRIMARY KEY, codigo_voucher TEXT UNIQUE, fecha_pago TEXT, periodo_mes TEXT, periodo_anio INTEGER, pastor_nombre TEXT, sueldo_bruto REAL, pct_afp REAL, monto_afp REAL, pct_essalud REAL, monto_essalud REAL, neto_pagado REAL, costo_total REAL, medio_pago TEXT, fondo TEXT, detalle TEXT, estado TEXT DEFAULT 'Pagado');
     CREATE TABLE IF NOT EXISTS config_iglesia (clave TEXT PRIMARY KEY, valor TEXT);
+    CREATE TABLE IF NOT EXISTS usuarios_sistema (id SERIAL PRIMARY KEY, usuario TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, nombre TEXT NOT NULL, rol TEXT DEFAULT 'Administrador', activo BOOLEAN DEFAULT TRUE, fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     """
     try:
         with get_db() as conn:
@@ -360,4 +423,4 @@ def inicializar_bd():
                 cur.execute(queries)
             conn.commit()
     except Exception as e:
-        print(f"La base de datos ya está inicializada o hubo un error: {e}")
+        print(f"Error de inicialización: {e}")
