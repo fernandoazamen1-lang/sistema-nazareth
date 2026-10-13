@@ -332,3 +332,62 @@ with tabs[2]:
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al reiniciar: {e}")
+import streamlit as st
+import core
+import pandas as pd
+
+core.requerir_login()
+core.aplicar_estilos_base()
+
+st.markdown("### 👥 Administración de Usuarios del Sistema")
+
+with st.expander("➕ Registrar Nuevo Usuario", expanded=False):
+    with st.form("form_nuevo_usuario"):
+        col1, col2 = st.columns(2)
+        with col1:
+            nuevo_u = st.text_input("Usuario (sin espacios, ej: tesorero)", placeholder="usuario").strip().lower()
+            nuevo_nom = st.text_input("Nombre Completo (ej: Juan Pérez)")
+        with col2:
+            nuevo_rol = st.selectbox("Rol", ["Administrador", "Tesorero General", "Pastor Principal", "Secretaría"])
+            nuevo_pass = st.text_input("Contraseña", type="password")
+
+        btn_guardar_u = st.form_submit_button("Guardar Usuario", type="primary")
+
+        if btn_guardar_u:
+            if not nuevo_u or not nuevo_nom or not nuevo_pass:
+                st.warning("⚠️ Completa todos los campos requeridos.")
+            else:
+                pass_hash = core.encriptar_clave(nuevo_pass)
+                try:
+                    core.query_db(
+                        """
+                        INSERT INTO usuarios_sistema (usuario, password_hash, nombre, rol, activo)
+                        VALUES (%s, %s, %s, %s, TRUE)
+                        """,
+                        (nuevo_u, pass_hash, nuevo_nom, nuevo_rol)
+                    )
+                    st.success(f"✅ Usuario '{nuevo_u}' registrado correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar: {e}")
+
+# Tabla con los usuarios registrados
+st.markdown("##### Cuentas Registradas")
+try:
+    with core.get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, usuario, nombre, rol, activo, fecha_creacion FROM usuarios_sistema ORDER BY id ASC")
+            filas = cur.fetchall()
+            df_usuarios = pd.DataFrame(filas)
+
+    if not df_usuarios.empty:
+        st.dataframe(
+            df_usuarios.rename(columns={
+                "id": "ID", "usuario": "Usuario", "nombre": "Nombre",
+                "rol": "Rol", "activo": "Activo", "fecha_creacion": "Fecha Registro"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+except Exception as e:
+    st.error(f"Error al consultar usuarios: {e}")
