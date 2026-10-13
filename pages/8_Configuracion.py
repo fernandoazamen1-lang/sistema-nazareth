@@ -7,6 +7,9 @@ import pandas as pd
 from datetime import date
 
 st.set_page_config(page_title="Configuración General", page_icon="⚙️", layout="wide")
+
+# 1. Exigir autenticación y aplicar estilos base
+core.requerir_login()
 core.aplicar_estilos_base()
 
 # Asegurar tablas e inicialización de columnas necesarias (Sintaxis PostgreSQL)
@@ -74,7 +77,8 @@ st.subheader("⚙️ Configuración y Administración del Sistema")
 tabs = st.tabs([
     "🏛️ Parámetros y Catálogos",
     "🔒 Cierres de Mes y Auditoría",
-    "🛡️ Respaldo y Mantenimiento"
+    "🛡️ Respaldo y Mantenimiento",
+    "👥 Usuarios y Permisos"
 ])
 
 # ==============================================================================
@@ -195,7 +199,6 @@ with tabs[1]:
         anio_c, mes_c, num_m, _ = core.selector_periodo("cierre_master")
         per_str = f"{anio_c}-{num_m:02d}"
 
-        # Cambio strftime a SUBSTRING para compatibilidad con PostgreSQL
         df_m_per = core.read_db("SELECT tipo, monto FROM movimientos WHERE SUBSTRING(fecha FROM 1 FOR 7) = ?", (per_str,))
         ing_p = df_m_per[df_m_per["tipo"] == "Ingreso"]["monto"].sum()
         egr_p = df_m_per[df_m_per["tipo"] == "Egreso"]["monto"].sum()
@@ -298,7 +301,7 @@ with tabs[2]:
 
     with c_b2:
         st.markdown("#### ⚠️ Formateo de Cero / Reset de Fábrica")
-        st.caption("Vacía por completo todas las tablas de tu base de datos en Supabase (Ideal para limpiar datos de prueba antes de entregar el sistema).")
+        st.caption("Vacía por completo los datos operativos en Supabase (movimientos, miembros, etc.), conservando intactos tus accesos de usuario.")
         st.warning("Borrará permanentemente movimientos, diezmos, actividades, compromisos y miembros en la nube.")
 
         chk_fmt = st.checkbox("Confirmo el vaciado definitivo del sistema en la Nube.")
@@ -326,68 +329,72 @@ with tabs[2]:
                                 if os.path.isfile(p):
                                     os.remove(p)
 
-                    core.inicializar_bd()
                     core.registrar_log("Configuración", "RESET", "Sistema formateado de cero en la nube.")
-                    st.success("🎉 Sistema reiniciado de fábrica con éxito. La base de datos en Supabase está vacía.")
+                    st.success("🎉 Sistema reiniciado de fábrica con éxito. La base de datos operativa está vacía.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al reiniciar: {e}")
-import streamlit as st
-import core
-import pandas as pd
 
-core.requerir_login()
-core.aplicar_estilos_base()
+# ==============================================================================
+# PESTAÑA 4: USUARIOS Y PERMISOS (RESTRINGIDA AL ADMINISTRADOR)
+# ==============================================================================
+with tabs[3]:
+    rol_actual = st.session_state.get("usuario_actual", {}).get("rol", "")
 
-st.markdown("### 👥 Administración de Usuarios del Sistema")
+    if rol_actual == "Administrador":
+        st.markdown("#### 👥 Administración de Usuarios y Accesos")
+        st.caption("Control exclusivo para altas y supervisión de credenciales del personal.")
 
-with st.expander("➕ Registrar Nuevo Usuario", expanded=False):
-    with st.form("form_nuevo_usuario"):
-        col1, col2 = st.columns(2)
-        with col1:
-            nuevo_u = st.text_input("Usuario (sin espacios, ej: tesorero)", placeholder="usuario").strip().lower()
-            nuevo_nom = st.text_input("Nombre Completo (ej: Juan Pérez)")
-        with col2:
-            nuevo_rol = st.selectbox("Rol", ["Administrador", "Tesorero General", "Pastor Principal", "Secretaría"])
-            nuevo_pass = st.text_input("Contraseña", type="password")
+        with st.expander("➕ Registrar Nuevo Usuario", expanded=False):
+            with st.form("form_nuevo_usuario"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    nuevo_u = st.text_input("Usuario (ej: tesoreria, pastor)", placeholder="Sin espacios").strip().lower()
+                    nuevo_nom = st.text_input("Nombre Completo (ej: Juan Pérez)")
+                with col2:
+                    nuevo_rol = st.selectbox("Rol en el Sistema", ["Tesorero General", "Pastor Principal", "Secretaría", "Administrador"])
+                    nuevo_pass = st.text_input("Contraseña Temporal", type="password")
 
-        btn_guardar_u = st.form_submit_button("Guardar Usuario", type="primary")
+                btn_guardar_u = st.form_submit_button("Guardar Usuario", type="primary")
 
-        if btn_guardar_u:
-            if not nuevo_u or not nuevo_nom or not nuevo_pass:
-                st.warning("⚠️ Completa todos los campos requeridos.")
-            else:
-                pass_hash = core.encriptar_clave(nuevo_pass)
-                try:
-                    core.query_db(
-                        """
-                        INSERT INTO usuarios_sistema (usuario, password_hash, nombre, rol, activo)
-                        VALUES (%s, %s, %s, %s, TRUE)
-                        """,
-                        (nuevo_u, pass_hash, nuevo_nom, nuevo_rol)
-                    )
-                    st.success(f"✅ Usuario '{nuevo_u}' registrado correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al guardar: {e}")
+                if btn_guardar_u:
+                    if not nuevo_u or not nuevo_nom or not nuevo_pass:
+                        st.warning("⚠️ Completa todos los campos requeridos.")
+                    else:
+                        pass_hash = core.encriptar_clave(nuevo_pass)
+                        try:
+                            core.query_db(
+                                """
+                                INSERT INTO usuarios_sistema (usuario, password_hash, nombre, rol, activo)
+                                VALUES (%s, %s, %s, %s, TRUE)
+                                """,
+                                (nuevo_u, pass_hash, nuevo_nom, nuevo_rol)
+                            )
+                            core.registrar_log("Usuarios", "Crear", f"Usuario '{nuevo_u}' registrado con rol '{nuevo_rol}'.")
+                            st.success(f"✅ Usuario '{nuevo_u}' registrado exitosamente.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al registrar usuario: {e}")
 
-# Tabla con los usuarios registrados
-st.markdown("##### Cuentas Registradas")
-try:
-    with core.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, usuario, nombre, rol, activo, fecha_creacion FROM usuarios_sistema ORDER BY id ASC")
-            filas = cur.fetchall()
-            df_usuarios = pd.DataFrame(filas)
+        st.markdown("##### Cuentas Registradas en el Sistema")
+        try:
+            with core.get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id, usuario, nombre, rol, activo, fecha_creacion FROM usuarios_sistema ORDER BY id ASC")
+                    filas = cur.fetchall()
+                    df_usuarios = pd.DataFrame(filas)
 
-    if not df_usuarios.empty:
-        st.dataframe(
-            df_usuarios.rename(columns={
-                "id": "ID", "usuario": "Usuario", "nombre": "Nombre",
-                "rol": "Rol", "activo": "Activo", "fecha_creacion": "Fecha Registro"
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
-except Exception as e:
-    st.error(f"Error al consultar usuarios: {e}")
+            if not df_usuarios.empty:
+                st.dataframe(
+                    df_usuarios.rename(columns={
+                        "id": "ID", "usuario": "Usuario", "nombre": "Nombre",
+                        "rol": "Rol", "activo": "Activo", "fecha_creacion": "Fecha Creación"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+        except Exception as e:
+            st.error(f"Error al listar usuarios: {e}")
+
+    else:
+        st.info("ℹ️ **Acceso Restringido**: La creación y administración de usuarios está reservada exclusivamente para el Administrador General.")
