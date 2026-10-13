@@ -162,29 +162,41 @@ def aplicar_estilos_base():
     verificar_licencia()
     css_string = """
 <style translate="no">
-/* 1. Ocultar toolbar de deploy, tres puntos y footer */
-.stDeployButton, [data-testid="stToolbar"], #MainMenu, footer { 
+/* 1. Ocultar únicamente el menú de 3 puntos, botón Deploy y footer nativo */
+#MainMenu, footer, .stDeployButton, [data-testid="stToolbar"] { 
     display: none !important; 
     visibility: hidden !important; 
 }
 
-/* 2. Mantener header transparente sin bloquear la pantalla */
-header[data-testid="stHeader"] {
+/* 2. Mantener header transparente para que los botones de navegación existan */
+header[data-testid="stHeader"], header {
     background: transparent !important;
-    height: 0px !important;
-    overflow: visible !important;
+    display: block !important;
+    visibility: visible !important;
 }
 
-/* 3. Asegurar que la flecha para desplegar el sidebar esté siempre visible */
-[data-testid="stSidebarCollapsedControl"] {
+/* 3. Forzar que el botón de la flecha lateral siempre sea visible, azul y fácil de presionar */
+div[data-testid="collapsedControl"], [data-testid="collapsedControl"] {
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
-    color: #1E40AF !important;
-    z-index: 99999 !important;
+    z-index: 999999 !important;
     position: fixed !important;
-    top: 10px !important;
-    left: 10px !important;
+    top: 12px !important;
+    left: 12px !important;
+    background: #1E40AF !important;
+    border-radius: 8px !important;
+    padding: 6px !important;
+    box-shadow: 0 4px 10px rgba(30, 64, 175, 0.4) !important;
+    cursor: pointer !important;
+}
+
+div[data-testid="collapsedControl"] svg, [data-testid="collapsedControl"] svg {
+    fill: #FFFFFF !important;
+    stroke: #FFFFFF !important;
+    color: #FFFFFF !important;
+    width: 22px !important;
+    height: 22px !important;
 }
 
 html, body, [class*="css"], .stApp { 
@@ -312,18 +324,26 @@ div[data-baseweb="input"] input:focus, div[data-baseweb="select"]:focus-within {
 </style>
 """
     st.markdown(css_string, unsafe_allow_html=True)
+    
+    # Script para reabrir automáticamente la barra lateral al terminar la carga
     components.html("""
     <script>
-        function forzarLimpieza() {
+        function asegurarSidebarAbierto() {
             try {
                 const doc = window.parent.document;
-                if (doc.documentElement.lang !== 'es') { doc.documentElement.lang = 'es'; }
-                if (doc.documentElement.getAttribute('translate') !== 'no') { doc.documentElement.setAttribute('translate', 'no'); }
+                const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
+                const btnAbrir = doc.querySelector('[data-testid="collapsedControl"]');
+                
+                if (btnAbrir && (!sidebar || sidebar.getAttribute('aria-expanded') === 'false')) {
+                    btnAbrir.click();
+                }
             } catch (e) {}
         }
-        forzarLimpieza();
+        setTimeout(asegurarSidebarAbierto, 600);
+        setTimeout(asegurarSidebarAbierto, 1500);
     </script>
     """, height=0, width=0)
+    
     st.markdown("""
 <div style="background: #FFFFFF; padding: 14px 22px; border-radius: 14px; display: flex; align-items: center; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px;">
 <div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 16px; border: 1px solid #DBEAFE;">⛪</div>
