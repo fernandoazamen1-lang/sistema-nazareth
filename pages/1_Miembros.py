@@ -15,29 +15,36 @@ core.inicializar_bd()
 core.aplicar_estilos_base()
 
 # ==============================================================================
-# AUTO-CREACIÓN DE COLUMNAS FALTANTES EN POSTGRESQL (SOLUCIÓN DEFINITIVA)
+# MIGRACIÓN SEGURA Y AISLADA COLUMNA POR COLUMNA (POSTGRESQL COMPATIBLE)
 # ==============================================================================
+columnas_miembros = [
+    ("telefono", "TEXT DEFAULT ''"),
+    ("direccion", "TEXT DEFAULT ''"),
+    ("fecha_nacimiento", "TEXT DEFAULT ''"),
+    ("estado_civil", "TEXT DEFAULT 'Soltero(a)'"),
+    ("bautizado", "TEXT DEFAULT 'No'"),
+    ("miembro_pleno", "TEXT DEFAULT 'No'"),
+    ("cargo_eclesiastico", "TEXT DEFAULT 'Miembro Activo'"),
+    ("foto", "TEXT DEFAULT ''"),
+    ("fecha_registro", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+]
+
 try:
     with core.get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS miembros (
-                    id_miembro TEXT PRIMARY KEY,
-                    nombre TEXT NOT NULL
-                );
-                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '';
-                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS direccion TEXT DEFAULT '';
-                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS fecha_nacimiento TEXT DEFAULT '';
-                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS estado_civil TEXT DEFAULT 'Soltero(a)';
-                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS bautizado TEXT DEFAULT 'No';
-                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS miembro_pleno TEXT DEFAULT 'No';
-                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS cargo_eclesiastico TEXT DEFAULT 'Miembro Activo';
-                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS foto TEXT DEFAULT '';
-                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-            """)
+            cur.execute("CREATE TABLE IF NOT EXISTS miembros (id_miembro TEXT PRIMARY KEY, nombre TEXT NOT NULL);")
         conn.commit()
 except Exception:
     pass
+
+for col_nom, col_def in columnas_miembros:
+    try:
+        with core.get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"ALTER TABLE miembros ADD COLUMN IF NOT EXISTS {col_nom} {col_def};")
+            conn.commit()
+    except Exception:
+        pass
 
 CARPETA_FOTOS = "fotos_miembros"
 os.makedirs(CARPETA_FOTOS, exist_ok=True)
@@ -263,7 +270,7 @@ if opcion == "Ver Miembros":
                         st.write(f"✝️ **Cargo Eclesiástico:** {datos_m.get('cargo_eclesiastico', 'Miembro Activo')}")
 
 # ==============================================================================
-# VISTA 2: REGISTRAR MIEMBRO
+# VISTA 2: REGISTRAR MIEMBRO (PROTEGIDO)
 # ==============================================================================
 elif opcion == "Registrar Miembro":
     st.markdown("#### ➕ Formulario de Afiliación / Registro Eclesiástico")
@@ -284,14 +291,20 @@ elif opcion == "Registrar Miembro":
             d_cargo = st.selectbox("Cargo Eclesiástico / Ministerio:", LISTA_CARGOS)
             d_foto_file = st.file_uploader("Fotografía del Miembro (Opcional):", type=["jpg", "png", "jpeg"])
 
-        if st.form_submit_button("💾 Guardar Miembro en Padrón", type="primary"):
-            if not d_id.strip() or not d_nom.strip():
-                st.error("El DNI/Código y el Nombre completo son obligatorios.")
-            else:
-                ruta_foto_guardada = ""
-                if d_foto_file is not None:
-                    ruta_foto_guardada = core.comprimir_y_subir_foto(d_foto_file, f"miembro_{d_id.strip()}")
+        btn_guardar = st.form_submit_button("💾 Guardar Miembro en Padrón", type="primary")
 
+    if btn_guardar:
+        if not d_id.strip() or not d_nom.strip():
+            st.error("El DNI/Código y el Nombre completo son obligatorios.")
+        else:
+            ruta_foto_guardada = ""
+            if d_foto_file is not None:
+                try:
+                    ruta_foto_guardada = core.comprimir_y_subir_foto(d_foto_file, f"miembro_{d_id.strip()}")
+                except Exception as e_f:
+                    st.warning(f"Aviso: La foto no pudo subirse al almacenamiento ({e_f}), pero se guardarán los datos del miembro.")
+
+            try:
                 core.query_db("""
                     INSERT INTO miembros 
                     (id_miembro, nombre, telefono, direccion, fecha_nacimiento, estado_civil, bautizado, miembro_pleno, cargo_eclesiastico, foto)
@@ -313,6 +326,8 @@ elif opcion == "Registrar Miembro":
                 core.registrar_log("Miembros", "Registro", f"Inscrito {d_nom.strip()} (DNI: {d_id.strip()})")
                 st.toast("✅ Miembro registrado exitosamente.")
                 st.rerun()
+            except Exception as e_db:
+                st.error(f"Error al guardar en la base de datos: {e_db}")
 
 # ==============================================================================
 # VISTA 3: EDITAR MIEMBRO
@@ -370,19 +385,25 @@ elif opcion == "✏️ Editar Miembro":
                 edit_cargo = st.selectbox("Cargo Eclesiástico / Ministerio:", LISTA_CARGOS, index=idx_cargo)
                 edit_foto_file = st.file_uploader("Subir nueva fotografía (reemplazará la actual):", type=["jpg", "png", "jpeg"])
 
-            if st.form_submit_button("💾 Guardar Cambios", type="primary"):
-                if not edit_id.strip() or not edit_nom.strip():
-                    st.error("El DNI/Código y el Nombre completo no pueden estar vacíos.")
-                else:
-                    ruta_foto_final = foto_existente
-                    if edit_foto_file is not None:
+            btn_editar = st.form_submit_button("💾 Guardar Cambios", type="primary")
+
+        if btn_editar:
+            if not edit_id.strip() or not edit_nom.strip():
+                st.error("El DNI/Código y el Nombre completo no pueden estar vacíos.")
+            else:
+                ruta_foto_final = foto_existente
+                if edit_foto_file is not None:
+                    try:
                         nueva_ruta = core.comprimir_y_subir_foto(edit_foto_file, f"miembro_{edit_id.strip()}")
                         if nueva_ruta:
                             ruta_foto_final = nueva_ruta
                             if foto_existente and not foto_existente.startswith("http") and os.path.exists(foto_existente):
                                 try: os.remove(foto_existente)
                                 except Exception: pass
+                    except Exception as e_f:
+                        st.warning(f"Aviso al subir foto: {e_f}")
 
+                try:
                     core.query_db("""
                         UPDATE miembros SET
                             id_miembro = ?,
@@ -410,6 +431,8 @@ elif opcion == "✏️ Editar Miembro":
                     core.registrar_log("Miembros", "Edición", f"Actualizado miembro {edit_nom.strip()} (DNI: {edit_id.strip()})")
                     st.toast("✅ Datos actualizados con éxito.")
                     st.rerun()
+                except Exception as e_db:
+                    st.error(f"Error al actualizar en la base de datos: {e_db}")
 
 # ==============================================================================
 # VISTA 4: CARGA MASIVA (EXCEL)
