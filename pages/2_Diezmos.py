@@ -19,18 +19,18 @@ try:
     with core.get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                ALTER TABLE diezmos ADD COLUMN IF NOT EXISTS codigo_comprobante TEXT DEFAULT ''
+                ALTER TABLE public.diezmos ADD COLUMN IF NOT EXISTS codigo_comprobante TEXT DEFAULT ''
             """)
         conn.commit()
 except Exception:
     pass
 
 # Catálogos base
-df_m = core.read_db("SELECT id_miembro, nombre, telefono FROM miembros ORDER BY nombre ASC")
+df_m = core.read_db("SELECT id_miembro, nombre, telefono FROM public.miembros ORDER BY nombre ASC")
 d_miembros = dict(zip(df_m["nombre"], df_m["id_miembro"])) if not df_m.empty else {}
 d_telefonos = dict(zip(df_m["nombre"], df_m["telefono"])) if not df_m.empty else {}
 
-df_t = core.read_db("SELECT descripcion FROM auditoria WHERE modulo='Config_Tesorero' ORDER BY id DESC LIMIT 1")
+df_t = core.read_db("SELECT descripcion FROM public.auditoria WHERE modulo='Config_Tesorero' ORDER BY id DESC LIMIT 1")
 tesorero_def = df_t.iloc[0]["descripcion"] if not df_t.empty else "Tesorero General"
 
 # ==============================================================================
@@ -51,7 +51,6 @@ def get_font(size, bold=False):
     except Exception:
         pass
 
-    # Rutas alternativas del sistema en caso de estar disponibles
     rutas_alt = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -82,7 +81,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     img = Image.new("RGB", (w, h), "#F8FAFC")
     dr = ImageDraw.Draw(img)
 
-    # 1. Bordes exteriores (enteros estrictos)
+    # 1. Bordes exteriores
     dr.rounded_rectangle([(16, 16), (w - 16, h - 16)], 20, fill="#FFFFFF", outline="#1E3A8A", width=3)
     dr.rounded_rectangle([(24, 24), (w - 24, h - 24)], 16, outline="#CA8A04", width=1)
 
@@ -92,7 +91,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     draw_center(dr, 85, "ASAMBLEAS DE DIOS DEL PERÚ  •  DEPARTAMENTO DE TESORERÍA", get_font(13, True), "#93C5FD", w)
     draw_center(dr, 120, f"CONSTANCIA DE DIEZMO:  {serie}", get_font(17, True), "#FDE047", w)
 
-    # 3. Datos del aportante
+    # 3. Datos del hermano
     dr.rounded_rectangle([(42, 185), (w - 42, 475)], 12, fill="#FFFFFF", outline="#E2E8F0", width=1)
     rows = [
         ("Hermano(a) Aportante:", str(nombre).strip().upper()[:36]),
@@ -139,7 +138,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
 
 # --- UTILITARIOS DE DIEZMOS ---
 def get_diezmos():
-    df = core.read_db("SELECT * FROM diezmos ORDER BY id DESC")
+    df = core.read_db("SELECT * FROM public.diezmos ORDER BY id DESC")
     if not df.empty:
         df["serie_constancia"] = df.apply(
             lambda r: r["codigo_comprobante"] if r.get("codigo_comprobante") else f"D - {int(r['id']):05d}", axis=1
@@ -147,7 +146,7 @@ def get_diezmos():
     return df
 
 def proximo_codigo():
-    df_u = core.read_db("SELECT codigo_comprobante, id FROM diezmos ORDER BY id DESC LIMIT 1")
+    df_u = core.read_db("SELECT codigo_comprobante, id FROM public.diezmos ORDER BY id DESC LIMIT 1")
     if df_u.empty:
         return "D - 00001"
     cod = str(df_u.iloc[0].get("codigo_comprobante", ""))
@@ -156,7 +155,7 @@ def proximo_codigo():
             return f"D - {int(cod.replace('D -', '').strip()) + 1:05d}"
         except Exception:
             pass
-    cant = core.read_db("SELECT COUNT(*) as t FROM diezmos").iloc[0]["t"]
+    cant = core.read_db("SELECT COUNT(*) as t FROM public.diezmos").iloc[0]["t"]
     return f"D - {int(cant) + 1:05d}"
 
 # ==============================================================================
@@ -173,7 +172,6 @@ def panel_whatsapp_descarga(d):
         st.markdown("#### 📤 Envío Rápido en 2 Clics")
         st.caption("Sigue estos 2 sencillos pasos para enviar el voucher digital:")
         
-        # PASO 1: Descargar la imagen
         st.markdown("**Paso 1:** Descarga la constancia en tu dispositivo.")
         nombre_archivo = f"Boucher_{d['serie'].replace(' ','')}_{str(d['nombre']).replace(' ', '_')}.png"
         st.download_button(
@@ -187,7 +185,6 @@ def panel_whatsapp_descarga(d):
         
         st.markdown("---")
         
-        # PASO 2: Abrir WhatsApp con mensaje listo
         st.markdown("**Paso 2:** Abre WhatsApp y adjunta la imagen con el clip 📎.")
         t_raw = "".join(filter(str.isdigit, str(d.get("telefono", ""))))
         tel = st.text_input("Número de celular (9 dígitos):", value=t_raw, placeholder="Ej. 987654321")
@@ -351,11 +348,11 @@ if opcion == "Registrar Nuevo Diezmo":
             if st.form_submit_button(f"💾 Registrar y Emitir ({sig_cod})", type="primary"):
                 if tes.strip() and tes.strip() != tesorero_def:
                     core.query_db(
-                        "INSERT INTO auditoria (fecha_hora, modulo, accion, descripcion) VALUES (?, 'Config_Tesorero', 'Actualizar', ?)",
+                        "INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (?, 'Config_Tesorero', 'Actualizar', ?)",
                         (str(date.today()), tes.strip())
                     )
                 core.query_db(
-                    "INSERT INTO diezmos (fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle, codigo_comprobante) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO public.diezmos (fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle, codigo_comprobante) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (str(f_d), d_miembros[nom], nom, mes_c, medio, monto, det.strip(), sig_cod)
                 )
                 core.registrar_log("Diezmos", "Registro", f"Diezmo {nom} S/. {monto:,.2f} ({sig_cod})")
@@ -424,26 +421,29 @@ elif opcion == "Ver Registros por Mes":
         f_fin = f"{anio_s}-{core.MESES_NUM[mes_s]:02d}-{u_dia:02d}"
         c_efe = f"ASIENTO-DZ-EFE-{anio_s}-{core.MESES_NUM[mes_s]:02d}"
         c_ban = f"ASIENTO-DZ-BAN-{anio_s}-{core.MESES_NUM[mes_s]:02d}"
-        prev = not core.read_db("SELECT id FROM movimientos WHERE comprobante IN (?, ?)", (c_efe, c_ban)).empty
+        prev = not core.read_db("SELECT id FROM public.movimientos WHERE comprobante IN (?, ?)", (c_efe, c_ban)).empty
 
         if st.button(
             "🔄 Actualizar Asientos en Tesorería" if prev else f"🚀 Registrar los 2 Asientos en Tesorería ({f_fin})",
             type="primary" if not prev else "secondary"
         ):
-            core.query_db("DELETE FROM movimientos WHERE comprobante IN (?, ?)", (c_efe, c_ban))
-            if efe > 0:
-                core.query_db(
-                    "INSERT INTO movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito) VALUES (?, 'Ingreso', 'Diezmos Consolidado', 'Diezmos en Efectivo', 'General', ?, 'Efectivo', ?, ?, 'Tesorería', '', 'Cobrado')",
-                    (f_fin, efe, c_efe, f"Diezmos efectivo {mes_s} {anio_s}")
-                )
-            if ban > 0:
-                core.query_db(
-                    "INSERT INTO movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito) VALUES (?, 'Ingreso', 'Diezmos Consolidado', 'Diezmos en Banco / Transferencia', 'General', ?, 'Depósito / Transferencia', ?, ?, 'Tesorería', '', 'Cobrado')",
-                    (f_fin, ban, c_ban, f"Diezmos banco {mes_s} {anio_s}")
-                )
-            core.registrar_log("Diezmos", "Tesorería", f"Asentados diezmos de {mes_s} {anio_s}")
-            st.toast("✅ Asientos asentados en Tesorería.")
-            st.rerun()
+            try:
+                core.query_db("DELETE FROM public.movimientos WHERE comprobante IN (?, ?)", (c_efe, c_ban))
+                if efe > 0:
+                    core.query_db(
+                        "INSERT INTO public.movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito) VALUES (?, 'Ingreso', 'Diezmos Consolidado', 'Diezmos en Efectivo', 'General', ?, 'Efectivo', ?, ?, 'Tesorería', '', 'Cobrado')",
+                        (f_fin, efe, c_efe, f"Diezmos efectivo {mes_s} {anio_s}")
+                    )
+                if ban > 0:
+                    core.query_db(
+                        "INSERT INTO public.movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito) VALUES (?, 'Ingreso', 'Diezmos Consolidado', 'Diezmos en Banco / Transferencia', 'General', ?, 'Depósito / Transferencia', ?, ?, 'Tesorería', '', 'Cobrado')",
+                        (f_fin, ban, c_ban, f"Diezmos banco {mes_s} {anio_s}")
+                    )
+                core.registrar_log("Diezmos", "Tesorería", f"Asentados diezmos de {mes_s} {anio_s}")
+                st.toast("✅ Asientos asentados en Tesorería con éxito.")
+                st.rerun()
+            except Exception as err:
+                st.error(f"Error al registrar asientos: {err}")
 
 # ==============================================================================
 # 3. FICHA INDIVIDUAL OFICIAL
@@ -459,7 +459,7 @@ elif opcion == "Ficha Individual Oficial":
         with r3: f_imp = st.date_input("Fecha Emisión:", value=date.today())
 
         df_i = core.read_db(
-            "SELECT fecha, monto, medio, mes, detalle FROM diezmos WHERE nombre_miembro=? AND date(fecha) >= ? AND date(fecha) <= ? ORDER BY date(fecha) ASC, id ASC",
+            "SELECT fecha, monto, medio, mes, detalle FROM public.diezmos WHERE nombre_miembro=? AND date(fecha) >= ? AND date(fecha) <= ? ORDER BY date(fecha) ASC, id ASC",
             (hno, str(f_ini), str(f_fin))
         )
         acum, filas_tab = 0.0, []
@@ -552,7 +552,6 @@ elif opcion == "⚙️ Modificar o Eliminar":
         df_all["anio_abono"] = df_all["dt_filtro"].dt.year
         df_all["mes_abono"] = df_all["dt_filtro"].dt.month
 
-        # PANEL DE FILTROS PARA BÚSQUEDA RÁPIDA
         with st.expander("🔎 Filtros de Búsqueda para Localizar Diezmo", expanded=True):
             col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             with col_f1:
@@ -565,7 +564,6 @@ elif opcion == "⚙️ Modificar o Eliminar":
             with col_f4:
                 filtro_medio = st.selectbox("Medio de Pago:", ["Todos"] + core.MEDIOS, index=0)
 
-        # Aplicar filtros
         df_filtrado = df_all.copy()
         if buscar_txt.strip():
             txt = buscar_txt.strip().lower()
@@ -626,7 +624,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
 
                 if btn_guardar:
                     core.query_db("""
-                        UPDATE diezmos SET 
+                        UPDATE public.diezmos SET 
                             fecha = ?, id_miembro = ?, nombre_miembro = ?, mes = ?, 
                             medio = ?, monto = ?, detalle = ?
                         WHERE id = ?
@@ -650,7 +648,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                 st.warning(f"⚠️ ¿Confirma eliminar definitivamente la constancia **{reg['serie_constancia']}** de **{reg['nombre_miembro']}** por **S/. {reg['monto']:,.2f}**?")
                 st.caption("Nota: Si ya se asentó el mes en Tesorería, recuerda volver a pulsar 'Actualizar Asientos en Tesorería' en el control mensual.")
                 if st.button("Eliminar Definitivamente", type="primary"):
-                    core.query_db("DELETE FROM diezmos WHERE id=?", (id_sel,))
+                    core.query_db("DELETE FROM public.diezmos WHERE id=?", (id_sel,))
                     core.registrar_log("Diezmos", "Eliminación", f"Eliminada constancia {reg['serie_constancia']} (#{id_sel})")
                     if "ultimo_dz" in st.session_state:
                         del st.session_state["ultimo_dz"]
