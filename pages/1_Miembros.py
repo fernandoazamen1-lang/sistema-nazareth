@@ -10,8 +10,50 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 
 st.set_page_config(page_title="Padrón de Miembros", page_icon="👥", layout="wide")
+core.requerir_login()
 core.inicializar_bd()
 core.aplicar_estilos_base()
+
+# ==============================================================================
+# ASEGURAR ESTRUCTURA COMPLETA DE LA TABLA EN POSTGRESQL (AUTO-MIGRACIÓN)
+# ==============================================================================
+try:
+    with core.get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS miembros (
+                    id_miembro TEXT PRIMARY KEY,
+                    nombre TEXT NOT NULL,
+                    telefono TEXT DEFAULT '',
+                    direccion TEXT DEFAULT '',
+                    fecha_nacimiento TEXT DEFAULT '',
+                    estado_civil TEXT DEFAULT 'Soltero(a)',
+                    bautizado TEXT DEFAULT 'No',
+                    miembro_pleno TEXT DEFAULT 'No',
+                    cargo_eclesiastico TEXT DEFAULT 'Miembro Activo',
+                    foto TEXT DEFAULT '',
+                    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            columnas_requeridas = [
+                ("telefono", "TEXT DEFAULT ''"),
+                ("direccion", "TEXT DEFAULT ''"),
+                ("fecha_nacimiento", "TEXT DEFAULT ''"),
+                ("estado_civil", "TEXT DEFAULT 'Soltero(a)'"),
+                ("bautizado", "TEXT DEFAULT 'No'"),
+                ("miembro_pleno", "TEXT DEFAULT 'No'"),
+                ("cargo_eclesiastico", "TEXT DEFAULT 'Miembro Activo'"),
+                ("foto", "TEXT DEFAULT ''"),
+                ("fecha_registro", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            ]
+            for col, tipo in columnas_requeridas:
+                try:
+                    cur.execute(f"ALTER TABLE miembros ADD COLUMN IF NOT EXISTS {col} {tipo};")
+                except Exception:
+                    pass
+        conn.commit()
+except Exception:
+    pass
 
 CARPETA_FOTOS = "fotos_miembros"
 os.makedirs(CARPETA_FOTOS, exist_ok=True)
@@ -23,8 +65,12 @@ opcion = st.radio(
     horizontal=True
 )
 
-# Obtener miembros con su orden de registro explícito (PostgreSQL Compatible)
-df_m = core.read_db("SELECT ROW_NUMBER() OVER(ORDER BY fecha_registro ASC) as nro_orden, * FROM miembros ORDER BY fecha_registro ASC")
+# Obtener miembros ordenados; si fecha_registro es nula, ordena por id_miembro
+df_m = core.read_db("""
+    SELECT ROW_NUMBER() OVER(ORDER BY COALESCE(fecha_registro, '1970-01-01'::timestamp) ASC, id_miembro ASC) as nro_orden, * 
+    FROM miembros 
+    ORDER BY COALESCE(fecha_registro, '1970-01-01'::timestamp) ASC, id_miembro ASC
+""")
 
 LISTA_CARGOS = [
     "Miembro Activo", 
@@ -149,7 +195,6 @@ if opcion == "Ver Miembros":
         df_mostrar = df_m.rename(columns=mapa_cols)
         df_mostrar["N°"] = df_mostrar["nro_orden"]
 
-        # Filtros de visualización
         with st.expander("🔍 **Filtros de Búsqueda y Columnas Personalizadas**", expanded=True):
             col_b1, col_b2, col_b3 = st.columns([3, 2, 2])
             with col_b1:
@@ -167,13 +212,12 @@ if opcion == "Ver Miembros":
                 default=["DNI / Código", "Nombres y Apellidos", "Teléfono", "Estado Civil", "Bautizado", "Cargo Eclesiástico"]
             )
 
-        # Aplicar filtros
         df_filtrado = df_mostrar.copy()
         if buscar_txt.strip():
             df_filtrado = df_filtrado[
-                df_filtrado["Nombres y Apellidos"].str.contains(buscar_txt, case=False, na=False) |
-                df_filtrado["DNI / Código"].str.contains(buscar_txt, case=False, na=False) |
-                df_filtrado["Dirección"].str.contains(buscar_txt, case=False, na=False)
+                df_filtrado["Nombres y Apellidos"].astype(str).str.contains(buscar_txt, case=False, na=False) |
+                df_filtrado["DNI / Código"].astype(str).str.contains(buscar_txt, case=False, na=False) |
+                df_filtrado["Dirección"].astype(str).str.contains(buscar_txt, case=False, na=False)
             ]
         if filtro_baut != "Todos":
             df_filtrado = df_filtrado[df_filtrado["Bautizado"] == filtro_baut]
@@ -184,7 +228,6 @@ if opcion == "Ver Miembros":
         st.markdown(f"**Total Miembros encontrados:** `{len(df_filtrado)}`")
         st.dataframe(df_filtrado[cols_finales], use_container_width=True, hide_index=True)
 
-        # Botones de exportación en PDF y Excel
         col_pdf, col_xls, _ = st.columns([3, 3, 4])
         with col_pdf:
             if columnas_seleccionadas:
@@ -207,7 +250,6 @@ if opcion == "Ver Miembros":
                 )
 
         st.markdown("---")
-        # Vista detallada individual con Foto (Compatible con Nube)
         st.subheader("👤 Ficha y Tarjeta Individual del Miembro")
         lista_nombres = df_filtrado["Nombres y Apellidos"].tolist() if not df_filtrado.empty else df_mostrar["Nombres y Apellidos"].tolist()
         
@@ -218,7 +260,6 @@ if opcion == "Ver Miembros":
                 col_foto, col_info = st.columns([1, 3])
                 with col_foto:
                     foto_path = str(datos_m.get("foto", ""))
-                    # Permite leer desde la web (http) o desde un archivo local antiguo
                     if foto_path and (foto_path.startswith("http") or os.path.exists(foto_path)):
                         st.image(foto_path, width=180, caption=f"Registro N° {datos_m['nro_orden']}")
                     else:
@@ -264,11 +305,9 @@ elif opcion == "Registrar Miembro":
                 st.error("El DNI/Código y el Nombre completo son obligatorios.")
             else:
                 ruta_foto_guardada = ""
-                # Si se subió foto, comprimir y enviar a la Nube (Supabase)
                 if d_foto_file is not None:
                     ruta_foto_guardada = core.comprimir_y_subir_foto(d_foto_file, f"miembro_{d_id.strip()}")
 
-                # Sintaxis PostgreSQL: ON CONFLICT en lugar de INSERT OR REPLACE
                 core.query_db("""
                     INSERT INTO miembros 
                     (id_miembro, nombre, telefono, direccion, fecha_nacimiento, estado_civil, bautizado, miembro_pleno, cargo_eclesiastico, foto)
@@ -282,7 +321,7 @@ elif opcion == "Registrar Miembro":
                     bautizado = EXCLUDED.bautizado,
                     miembro_pleno = EXCLUDED.miembro_pleno,
                     cargo_eclesiastico = EXCLUDED.cargo_eclesiastico,
-                    foto = EXCLUDED.foto
+                    foto = CASE WHEN EXCLUDED.foto <> '' THEN EXCLUDED.foto ELSE miembros.foto END
                 """, (
                     d_id.strip(), d_nom.strip(), d_tel.strip(), d_dir.strip(),
                     str(d_fnac), d_civil, d_baut, d_pleno, d_cargo, ruta_foto_guardada
@@ -352,12 +391,10 @@ elif opcion == "✏️ Editar Miembro":
                     st.error("El DNI/Código y el Nombre completo no pueden estar vacíos.")
                 else:
                     ruta_foto_final = foto_existente
-                    # Si se sube una foto nueva, la comprime y la envía a la Nube
                     if edit_foto_file is not None:
                         nueva_ruta = core.comprimir_y_subir_foto(edit_foto_file, f"miembro_{edit_id.strip()}")
                         if nueva_ruta:
                             ruta_foto_final = nueva_ruta
-                            # Borra la local anterior solo si era una ruta local (limpieza en transición)
                             if foto_existente and not foto_existente.startswith("http") and os.path.exists(foto_existente):
                                 try: os.remove(foto_existente)
                                 except Exception: pass
@@ -413,7 +450,6 @@ elif opcion == "📥 Carga Masiva (Excel)":
     if archivo_excel is not None:
         try:
             df_import = pd.read_excel(archivo_excel)
-            # Limpiar nombres de columnas
             df_import.columns = [str(c).strip().replace(" ", "_") for c in df_import.columns]
 
             mapa_import = {
@@ -428,7 +464,6 @@ elif opcion == "📥 Carga Masiva (Excel)":
                 "Cargo_Eclesiastico": "cargo_eclesiastico"
             }
 
-            # Validar columnas mínimas
             columnas_presentes = [c for c in mapa_import.keys() if c in df_import.columns]
             if "DNI_Codigo" not in columnas_presentes or "Nombres_y_Apellidos" not in columnas_presentes:
                 st.error("❌ El archivo no contiene las columnas requeridas: `DNI_Codigo` y `Nombres_y_Apellidos`.")
@@ -487,15 +522,14 @@ elif opcion == "📥 Carga Masiva (Excel)":
                             estado_civil = EXCLUDED.estado_civil,
                             bautizado = EXCLUDED.bautizado,
                             miembro_pleno = EXCLUDED.miembro_pleno,
-                            cargo_eclesiastico = EXCLUDED.cargo_eclesiastico,
-                            foto = EXCLUDED.foto
+                            cargo_eclesiastico = EXCLUDED.cargo_eclesiastico
                         """, (
                             d_id, d_nom, d_tel, d_dir, d_fnac, d_civil, d_baut, d_pleno, d_cargo, d_id
                         ))
                         registros_nuevos += 1
 
                     core.registrar_log("Miembros", "Carga Masiva", f"Importados/actualizados {registros_nuevos} miembros.")
-                    st.success(f"✅ ¡Carga completada con éxito! Se procesaron {registros_nuevos} registros correctamente (Omitidos por datos incompletos: {registros_omitidos}).")
+                    st.success(f"✅ ¡Carga completada con éxito! Se procesaron {registros_nuevos} registros correctamente (Omitidos: {registros_omitidos}).")
                     st.rerun()
         except Exception as e:
             st.error(f"Error al leer el archivo Excel: {e}")
@@ -513,7 +547,6 @@ elif opcion == "Eliminar Miembro":
         st.warning(f"¿Confirma retirar a **{m_del}** (DNI: {datos_del['id_miembro']}) del sistema?")
         if st.button("Eliminar Definitivamente", type="primary"):
             foto_del = str(datos_del.get("foto", ""))
-            # Intenta borrar solo si era una ruta local de tu disco duro
             if foto_del and not foto_del.startswith("http") and os.path.exists(foto_del):
                 try: os.remove(foto_del)
                 except Exception: pass
