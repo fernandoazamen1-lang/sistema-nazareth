@@ -104,7 +104,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     img = Image.new("RGB", (w, h), "#F8FAFC")
     dr = ImageDraw.Draw(img)
 
-    # 1. Bordes exteriores dobles elegantes
+    # 1. Bordes exteriores dobles elegantes (anchos como enteros estrictos)
     dr.rounded_rectangle([(16, 16), (w - 16, h - 16)], 20, fill="#FFFFFF", outline="#1E3A8A", width=3)
     dr.rounded_rectangle([(24, 24), (w - 24, h - 24)], 16, outline="#CA8A04", width=1)
 
@@ -114,8 +114,8 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     draw_center(dr, 85, "ASAMBLEAS DE DIOS DEL PERÚ  •  DEPARTAMENTO DE TESORERÍA", get_font(13, True), "#93C5FD", w)
     draw_center(dr, 120, f"CONSTANCIA DE DIEZMO:  {serie}", get_font(17, True), "#FDE047", w)
 
-    # 3. Tarjeta de información del aportante
-    dr.rounded_rectangle([(42, 185), (w - 42, 475)], 12, fill="#FFFFFF", outline="#E2E8F0", width=1.5)
+    # 3. Tarjeta de información del aportante (width=1 entero)
+    dr.rounded_rectangle([(42, 185), (w - 42, 475)], 12, fill="#FFFFFF", outline="#E2E8F0", width=1)
     rows = [
         ("Hermano(a) Aportante:", str(nombre).strip().upper()[:36]),
         ("Fecha de Recepción:", str(fecha)),
@@ -127,7 +127,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     for lbl, val in rows:
         dr.text((65, y), lbl, font=get_font(15), fill="#64748B")
         dr.text((310, y), val, font=get_font(16, True), fill="#0F172A")
-        dr.line([(65, y + 36), (w - 65, y + 36)], fill="#F1F5F9", width=1.5)
+        dr.line([(65, y + 36), (w - 65, y + 36)], fill="#F1F5F9", width=1)
         y += 52
 
     # 4. Tarjeta destacada del monto
@@ -138,9 +138,9 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     # 5. Palabras de gratitud pastoral
     dr.rounded_rectangle([(42, 635), (w - 42, 775)], 12, fill="#F0FDF4", outline="#86EFAC", width=1)
     draw_center(dr, 650, "❤️  PALABRAS DE GRATITUD PASTORAL", get_font(15, True), "#166534", w)
-    draw_center(dr, 684, "¡Muchas gracias por su fidelidad, amor y compromiso con la obra de Dios!", get_font(13.5), "#1F2937", w)
-    draw_center(dr, 712, "Oramos para que el Señor derrame abundantes bendiciones sobre su vida,", get_font(13.5), "#1F2937", w)
-    draw_center(dr, 738, "multiplique su siembra y guarde con paz y provisión a toda su amada familia.", get_font(13.5), "#1F2937", w)
+    draw_center(dr, 684, "¡Muchas gracias por su fidelidad, amor y compromiso con la obra de Dios!", get_font(14), "#1F2937", w)
+    draw_center(dr, 712, "Oramos para que el Señor derrame abundantes bendiciones sobre su vida,", get_font(14), "#1F2937", w)
+    draw_center(dr, 738, "multiplique su siembra y guarde con paz y provisión a toda su amada familia.", get_font(14), "#1F2937", w)
 
     # 6. Palabra de Dios sobre el dar
     dr.rounded_rectangle([(42, 795), (w - 42, 945)], 12, fill="#F8FAFC", outline="#E2E8F0", width=1)
@@ -151,7 +151,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
 
     # 7. Sección de certificación y tesorería
     dr.rounded_rectangle([(42, 965), (w - 42, 1105)], 12, fill="#F1F5F9", outline="#CBD5E1", width=1)
-    draw_center(dr, 980, "RECEPCIONADO Y CERTIFICADO FORMALMENTE POR:", get_font(12.5), "#64748B", w)
+    draw_center(dr, 980, "RECEPCIONADO Y CERTIFICADO FORMALMENTE POR:", get_font(13), "#64748B", w)
     draw_center(dr, 1012, str(tesorero).upper(), get_font(16, True), "#0F172A", w)
     draw_center(dr, 1048, "Tesorero(a) General  •  Iglesia Evangélica \"Nazareth\"", get_font(13), "#475569", w)
 
