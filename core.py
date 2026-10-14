@@ -240,8 +240,22 @@ def aplicar_estilos_base():
 footer { visibility: hidden !important; }
 .stDeployButton { display: none !important; }
 
+/* Ocultar barra superior completa: Share, estrella, lápiz de edición y GitHub */
+[data-testid="stToolbar"], 
+[data-testid="stHeaderActionElements"],
+[data-testid="stToolbarActions"],
+.stAppToolbar,
+header button,
+header a { 
+    display: none !important; 
+    visibility: hidden !important; 
+    pointer-events: none !important; 
+}
+
 header[data-testid="stHeader"] {
     background-color: transparent !important;
+    height: 0px !important;
+    min-height: 0px !important;
 }
 
 [data-testid="stSidebar"] { 
