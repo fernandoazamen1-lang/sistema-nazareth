@@ -10,15 +10,19 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 
 st.set_page_config(page_title="Módulo de Diezmos", page_icon="📖", layout="wide")
+core.requerir_login()
 core.aplicar_estilos_base()
 
-# Asegurar columna persistente de comprobante
-with core.get_db() as conn:
-    try:
-        conn.execute("ALTER TABLE diezmos ADD COLUMN codigo_comprobante TEXT DEFAULT ''")
+# Asegurar columna persistente de comprobante (Sintaxis PostgreSQL)
+try:
+    with core.get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                ALTER TABLE diezmos ADD COLUMN IF NOT EXISTS codigo_comprobante TEXT DEFAULT ''
+            """)
         conn.commit()
-    except Exception:
-        pass
+except Exception:
+    pass
 
 # Catálogos base
 df_m = core.read_db("SELECT id_miembro, nombre, telefono FROM miembros ORDER BY nombre ASC")
@@ -33,7 +37,7 @@ def get_diezmos():
     df = core.read_db("SELECT * FROM diezmos ORDER BY id DESC")
     if not df.empty:
         df["serie_constancia"] = df.apply(
-            lambda r: r["codigo_comprobante"] if r["codigo_comprobante"] else f"D - {int(r['id']):05d}", axis=1
+            lambda r: r["codigo_comprobante"] if r.get("codigo_comprobante") else f"D - {int(r['id']):05d}", axis=1
         )
     return df
 
@@ -120,28 +124,69 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     img.save(buf, "PNG")
     return buf.getvalue()
 
+# ==============================================================================
+# FLUJO EN 2 CLICS: DESCARGAR IMAGEN + ABRIR WHATSAPP
+# ==============================================================================
 def panel_whatsapp_descarga(d):
-    col_img, col_ws = st.columns([1, 1])
     img_b = render_boucher_png(d["serie"], d["fecha"], d["nombre"], d["mes"], d["medio"], d["monto"], d["detalle"], d["tesorero"])
+    
+    col_img, col_ws = st.columns([1, 1])
     with col_img:
-        st.image(img_b, width=330, caption=f"Constancia {d['serie']}")
-        st.download_button("📥 Descargar Boucher Oficial (PNG)", img_b, f"Constancia_{d['serie'].replace(' ','')}_{d['nombre']}.png", "image/png")
+        st.image(img_b, width=320, caption=f"Constancia {d['serie']}")
+        
     with col_ws:
-        st.markdown("#### 📲 Enviar al WhatsApp del Hermano(a)")
-        t_raw = str(d.get("telefono", "")).replace(" ", "").replace("-", "")
-        tel = st.text_input("Número celular (9 dígitos):", value=t_raw, placeholder="Ej. 987654321")
-        msg = (
-            f"Paz del Señor, apreciado(a) hermano(a) *{d['nombre']}*.\n\n"
-            f"Confirmación de su diezmo en la *Iglesia Evangélica Nazareth*:\n"
-            f"📌 *Constancia:* {d['serie']}\n📅 *Fecha:* {d['fecha']}\n🗓️ *Periodo:* {d['mes']}\n"
-            f"💳 *Medio:* {d['medio']}\n💰 *Monto:* S/. {d['monto']:,.2f}\n✍️ *Recibido por:* {d['tesorero']}\n\n"
-            f"¡Muchas gracias por su fidelidad! Que el Señor multiplique su bendición.\n\n"
-            f"_«...Dios ama al dador alegre.» (2 Corintios 9:7)_"
+        st.markdown("#### 📤 Envío Rápido en 2 Clics")
+        st.caption("Sigue estos 2 sencillos pasos para enviar el voucher digital:")
+        
+        # PASO 1: Descargar la imagen
+        st.markdown("**Paso 1:** Descarga la constancia en tu dispositivo.")
+        nombre_archivo = f"Boucher_{d['serie'].replace(' ','')}_{str(d['nombre']).replace(' ', '_')}.png"
+        st.download_button(
+            label="📥 1. Descargar Voucher Oficial (PNG)",
+            data=img_b,
+            file_name=nombre_archivo,
+            mime="image/png",
+            use_container_width=True,
+            type="primary"
         )
+        
+        st.markdown("---")
+        
+        # PASO 2: Abrir WhatsApp con mensaje listo
+        st.markdown("**Paso 2:** Abre WhatsApp y adjunta la imagen con el clip 📎.")
+        t_raw = "".join(filter(str.isdigit, str(d.get("telefono", ""))))
+        tel = st.text_input("Número de celular (9 dígitos):", value=t_raw, placeholder="Ej. 987654321")
+        
+        msg = (
+            f"⛪ *Iglesia Evangélica \"Nazareth\"*\n"
+            f"Paz del Señor, estimado(a) hermano(a) *{d['nombre']}*.\n\n"
+            f"Se confirma la recepción y registro de su aporte:\n"
+            f"📌 *Constancia:* {d['serie']}\n"
+            f"📅 *Fecha:* {d['fecha']}\n"
+            f"🗓️ *Periodo/Mes:* {d['mes']}\n"
+            f"💳 *Medio:* {d['medio']}\n"
+            f"💰 *Monto:* S/. {d['monto']:,.2f}\n"
+            f"✍️ *Receptor:* {d['tesorero']}\n\n"
+            f"🖼️ _(Se adjunta la imagen de su voucher oficial formalmente certificado)._\n\n"
+            f"¡Muchas gracias por su fidelidad! Que el Señor continúe bendiciendo abundantemente su vida y hogar.\n\n"
+            f"_«Cada uno dé como propuso en su corazón... porque Dios ama al dador alegre.» (2 Corintios 9:7)_"
+        )
+        
         if tel.strip():
-            num = tel.strip() if tel.strip().startswith("51") else f"51{tel.strip()}"
+            num_clean = tel.strip()
+            num = num_clean if num_clean.startswith("51") else f"51{num_clean}"
             link = f"https://wa.me/{num}?text={urllib.parse.quote(msg)}"
-            st.markdown(f'<a href="{link}" target="_blank"><div style="background:#25D366;color:white;padding:12px;border-radius:8px;text-align:center;font-weight:bold;">🟢 Abrir WhatsApp con Mensaje Listo</div></a>', unsafe_allow_html=True)
+        else:
+            link = f"https://api.whatsapp.com/send?text={urllib.parse.quote(msg)}"
+            
+        st.markdown(
+            f'''<a href="{link}" target="_blank" style="text-decoration:none;">
+                <div style="background-color:#25D366;color:white;padding:12px;border-radius:10px;text-align:center;font-weight:700;font-size:15px;box-shadow:0 4px 10px rgba(37,211,102,0.3);margin-top:5px;">
+                    💬 2. Abrir WhatsApp con Mensaje Listo
+                </div>
+            </a>''',
+            unsafe_allow_html=True
+        )
 
 def generar_pdf_reporte_mensual(df_mes_rep, anio_rep, mes_rep, tot_m, efe_m, ban_m):
     buf = io.BytesIO()
