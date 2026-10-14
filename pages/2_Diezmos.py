@@ -1,6 +1,7 @@
 import streamlit as st
 import core
-import os, io, urllib.request, urllib.parse, calendar
+import reportlab
+import os, io, urllib.parse, calendar
 from datetime import date, datetime
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
@@ -34,71 +35,29 @@ tesorero_def = df_t.iloc[0]["descripcion"] if not df_t.empty else "Tesorero Gene
 
 # ==============================================================================
 # MOTOR TIPOGRÁFICO UNICODE GARANTIZADO (Ñ, TILDES, SIGNOS)
+# Usa las fuentes TrueType físicas incluidas en el paquete ReportLab del servidor
 # ==============================================================================
-CARPETA_FUENTES = "fuentes"
-
-def asegurar_fuentes_unicode():
-    """
-    Descarga una sola vez fuentes TrueType oficiales compatibles con UTF-8
-    en el servidor para garantizar que la 'Ñ' y los acentos se rendericen perfecto.
-    """
-    os.makedirs(CARPETA_FUENTES, exist_ok=True)
-    f_reg = os.path.join(CARPETA_FUENTES, "Roboto-Regular.ttf")
-    f_bld = os.path.join(CARPETA_FUENTES, "Roboto-Bold.ttf")
-
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    if not os.path.exists(f_reg):
-        urls_reg = [
-            "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Regular.ttf",
-            "https://cdnjs.cloudflare.com/ajax/libs/dejavu-sans/2.37/ttf/DejaVuSans.ttf"
-        ]
-        for u in urls_reg:
-            try:
-                req = urllib.request.Request(u, headers=headers)
-                with urllib.request.urlopen(req, timeout=8) as resp, open(f_reg, "wb") as f:
-                    f.write(resp.read())
-                if os.path.exists(f_reg): break
-            except Exception:
-                continue
-
-    if not os.path.exists(f_bld):
-        urls_bld = [
-            "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Bold.ttf",
-            "https://cdnjs.cloudflare.com/ajax/libs/dejavu-sans/2.37/ttf/DejaVuSans-Bold.ttf"
-        ]
-        for u in urls_bld:
-            try:
-                req = urllib.request.Request(u, headers=headers)
-                with urllib.request.urlopen(req, timeout=8) as resp, open(f_bld, "wb") as f:
-                    f.write(resp.read())
-                if os.path.exists(f_bld): break
-            except Exception:
-                continue
-
 def get_font(size, bold=False):
     """
-    Obtiene la fuente TrueType con soporte Unicode completo.
+    Carga la fuente TrueType 'Bitstream Vera' incluida directamente en ReportLab.
+    Garantiza soporte completo para Ñ, tildes, signos y símbolos sin depender de descargas.
     """
-    nombre = "Roboto-Bold.ttf" if bold else "Roboto-Regular.ttf"
-    ruta_local = os.path.join(CARPETA_FUENTES, nombre)
+    try:
+        dir_rl = os.path.dirname(reportlab.__file__)
+        archivo_fuente = "VeraBd.ttf" if bold else "Vera.ttf"
+        ruta_fuente = os.path.join(dir_rl, "fonts", archivo_fuente)
+        if os.path.exists(ruta_fuente):
+            return ImageFont.truetype(ruta_fuente, int(size))
+    except Exception:
+        pass
 
-    if not os.path.exists(ruta_local):
-        asegurar_fuentes_unicode()
-
-    if os.path.exists(ruta_local):
-        try:
-            return ImageFont.truetype(ruta_local, int(size))
-        except Exception:
-            pass
-
-    # Rutas estándar del sistema en caso de estar disponibles
-    rutas_sistema = [
+    # Rutas alternativas del sistema en caso de estar disponibles
+    rutas_alt = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf"
     ]
-    for r in rutas_sistema:
+    for r in rutas_alt:
         if os.path.exists(r):
             try:
                 return ImageFont.truetype(r, int(size))
@@ -123,7 +82,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     img = Image.new("RGB", (w, h), "#F8FAFC")
     dr = ImageDraw.Draw(img)
 
-    # 1. Bordes exteriores
+    # 1. Bordes exteriores (enteros estrictos)
     dr.rounded_rectangle([(16, 16), (w - 16, h - 16)], 20, fill="#FFFFFF", outline="#1E3A8A", width=3)
     dr.rounded_rectangle([(24, 24), (w - 24, h - 24)], 16, outline="#CA8A04", width=1)
 
@@ -133,7 +92,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     draw_center(dr, 85, "ASAMBLEAS DE DIOS DEL PERÚ  •  DEPARTAMENTO DE TESORERÍA", get_font(13, True), "#93C5FD", w)
     draw_center(dr, 120, f"CONSTANCIA DE DIEZMO:  {serie}", get_font(17, True), "#FDE047", w)
 
-    # 3. Datos del hermano
+    # 3. Datos del aportante
     dr.rounded_rectangle([(42, 185), (w - 42, 475)], 12, fill="#FFFFFF", outline="#E2E8F0", width=1)
     rows = [
         ("Hermano(a) Aportante:", str(nombre).strip().upper()[:36]),
@@ -168,7 +127,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     draw_center(dr, 870, "ni por necesidad, porque Dios ama al dador alegre.»", get_font(14), "#334155", w)
     draw_center(dr, 904, "— 2 Corintios 9:7 —", get_font(14, True), "#047857", w)
 
-    # 7. Tesorería y certificación
+    # 7. Certificación y Tesorería
     dr.rounded_rectangle([(42, 965), (w - 42, 1105)], 12, fill="#F1F5F9", outline="#CBD5E1", width=1)
     draw_center(dr, 980, "RECEPCIONADO Y CERTIFICADO FORMALMENTE POR:", get_font(13), "#64748B", w)
     draw_center(dr, 1012, str(tesorero).upper(), get_font(16, True), "#0F172A", w)
