@@ -15,7 +15,7 @@ core.inicializar_bd()
 core.aplicar_estilos_base()
 
 # ==============================================================================
-# ASEGURAR ESTRUCTURA COMPLETA DE LA TABLA EN POSTGRESQL (AUTO-MIGRACIÓN)
+# AUTO-CREACIÓN DE COLUMNAS FALTANTES EN POSTGRESQL (SOLUCIÓN DEFINITIVA)
 # ==============================================================================
 try:
     with core.get_db() as conn:
@@ -23,34 +23,18 @@ try:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS miembros (
                     id_miembro TEXT PRIMARY KEY,
-                    nombre TEXT NOT NULL,
-                    telefono TEXT DEFAULT '',
-                    direccion TEXT DEFAULT '',
-                    fecha_nacimiento TEXT DEFAULT '',
-                    estado_civil TEXT DEFAULT 'Soltero(a)',
-                    bautizado TEXT DEFAULT 'No',
-                    miembro_pleno TEXT DEFAULT 'No',
-                    cargo_eclesiastico TEXT DEFAULT 'Miembro Activo',
-                    foto TEXT DEFAULT '',
-                    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    nombre TEXT NOT NULL
                 );
+                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '';
+                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS direccion TEXT DEFAULT '';
+                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS fecha_nacimiento TEXT DEFAULT '';
+                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS estado_civil TEXT DEFAULT 'Soltero(a)';
+                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS bautizado TEXT DEFAULT 'No';
+                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS miembro_pleno TEXT DEFAULT 'No';
+                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS cargo_eclesiastico TEXT DEFAULT 'Miembro Activo';
+                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS foto TEXT DEFAULT '';
+                ALTER TABLE miembros ADD COLUMN IF NOT EXISTS fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
             """)
-            columnas_requeridas = [
-                ("telefono", "TEXT DEFAULT ''"),
-                ("direccion", "TEXT DEFAULT ''"),
-                ("fecha_nacimiento", "TEXT DEFAULT ''"),
-                ("estado_civil", "TEXT DEFAULT 'Soltero(a)'"),
-                ("bautizado", "TEXT DEFAULT 'No'"),
-                ("miembro_pleno", "TEXT DEFAULT 'No'"),
-                ("cargo_eclesiastico", "TEXT DEFAULT 'Miembro Activo'"),
-                ("foto", "TEXT DEFAULT ''"),
-                ("fecha_registro", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-            ]
-            for col, tipo in columnas_requeridas:
-                try:
-                    cur.execute(f"ALTER TABLE miembros ADD COLUMN IF NOT EXISTS {col} {tipo};")
-                except Exception:
-                    pass
         conn.commit()
 except Exception:
     pass
@@ -65,7 +49,7 @@ opcion = st.radio(
     horizontal=True
 )
 
-# Obtener miembros ordenados; si fecha_registro es nula, ordena por id_miembro
+# Obtener miembros con orden explícito
 df_m = core.read_db("""
     SELECT ROW_NUMBER() OVER(ORDER BY COALESCE(fecha_registro, '1970-01-01'::timestamp) ASC, id_miembro ASC) as nro_orden, * 
     FROM miembros 
@@ -175,7 +159,7 @@ def generar_plantilla_excel():
     return output.getvalue()
 
 # ==============================================================================
-# VISTA 1: VER MIEMBROS (FILTROS, TABLA, PDF Y EXCEL)
+# VISTA 1: VER MIEMBROS
 # ==============================================================================
 if opcion == "Ver Miembros":
     if df_m.empty:
@@ -279,7 +263,7 @@ if opcion == "Ver Miembros":
                         st.write(f"✝️ **Cargo Eclesiástico:** {datos_m.get('cargo_eclesiastico', 'Miembro Activo')}")
 
 # ==============================================================================
-# VISTA 2: REGISTRAR MIEMBRO CON FOTOGRAFÍA (NUBE)
+# VISTA 2: REGISTRAR MIEMBRO
 # ==============================================================================
 elif opcion == "Registrar Miembro":
     st.markdown("#### ➕ Formulario de Afiliación / Registro Eclesiástico")
@@ -331,7 +315,7 @@ elif opcion == "Registrar Miembro":
                 st.rerun()
 
 # ==============================================================================
-# VISTA 3: EDITAR / MODIFICAR MIEMBRO (NUBE)
+# VISTA 3: EDITAR MIEMBRO
 # ==============================================================================
 elif opcion == "✏️ Editar Miembro":
     st.markdown("#### ✏️ Modificar o Corregir Datos de un Miembro")
@@ -428,7 +412,7 @@ elif opcion == "✏️ Editar Miembro":
                     st.rerun()
 
 # ==============================================================================
-# VISTA 4: CARGA MASIVA MEDIANTE EXCEL
+# VISTA 4: CARGA MASIVA (EXCEL)
 # ==============================================================================
 elif opcion == "📥 Carga Masiva (Excel)":
     st.markdown("#### 📥 Importación Masiva de Miembros desde Archivo Excel")
