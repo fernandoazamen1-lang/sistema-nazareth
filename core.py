@@ -120,8 +120,9 @@ def requerir_login():
 # ==============================================================================
 @st.cache_resource
 def init_supabase() -> Client:
-    url: str = st.secrets["API_URL"]
-    key: str = st.secrets["API_KEY"]
+    url: str = str(st.secrets["API_URL"]).strip()
+    # Elimina saltos de línea y espacios invisibles que rompen el token
+    key: str = re.sub(r"\s+", "", str(st.secrets["API_KEY"]))
     return create_client(url, key)
 
 supabase = init_supabase()
