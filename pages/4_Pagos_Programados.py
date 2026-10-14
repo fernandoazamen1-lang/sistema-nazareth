@@ -6,6 +6,7 @@ import calendar
 import re
 
 st.set_page_config(page_title="Pagos Programados", page_icon="📅", layout="wide")
+core.requerir_login()
 core.aplicar_estilos_base()
 
 # Constantes del módulo
@@ -147,7 +148,7 @@ tabs = st.tabs([
 ])
 
 # ==============================================================================
-# PESTAÑA 1: CALENDARIO Y CRONOGRAMA INTERACTIVO
+# PESTAÑA 1: CALENDARIO Y CRONOGRAMA INTERACTIVO (OPTIMIZADO PARA MÓVIL)
 # ==============================================================================
 with tabs[0]:
     st.markdown("#### 📆 Calendario Mensual de Vencimientos y Compromisos")
@@ -207,48 +208,59 @@ with tabs[0]:
 
     st.markdown("---")
     st.markdown(f"### 🗓️ Cuadrícula: {mes_sel} {anio_sel}")
-
-    dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-    cols_encabezado = st.columns(7)
-    for i, dia_nombre in enumerate(dias_semana):
-        cols_encabezado[i].markdown(f"<div style='text-align: center; font-weight: bold; background-color: #1E3A8A; color: white; padding: 6px; border-radius: 4px;'>{dia_nombre}</div>", unsafe_allow_html=True)
+    st.caption("📱 *Si estás en celular, puedes deslizar la cuadrícula horizontalmente con el dedo.*")
 
     cal_mes_matriz = calendar.monthcalendar(anio_sel, mes_num)
 
+    # Renderizado responsivo en un único bloque HTML con scroll horizontal suave
+    html_cal = """
+    <div style="overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%; border: 1px solid #E2E8F0; border-radius: 12px; padding: 6px; background: #FFFFFF; box-shadow: 0 4px 12px rgba(15,23,42,0.03); margin-bottom: 20px;">
+        <table style="width: 100%; min-width: 720px; border-collapse: separate; border-spacing: 6px; table-layout: fixed;">
+            <thead>
+                <tr>
+    """
+    for d in ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]:
+        html_cal += f"<th style='background-color: #1E3A8A; color: white; padding: 8px 4px; border-radius: 6px; font-size: 13px; font-weight: 700; text-align: center; width: 14.28%;'>{d}</th>"
+    html_cal += "</tr></thead><tbody>"
+
     for semana in cal_mes_matriz:
-        cols_dias = st.columns(7)
-        for dia_idx, dia_num in enumerate(semana):
-            with cols_dias[dia_idx]:
-                if dia_num == 0:
-                    st.markdown("<div style='height: 95px; background-color: #F1F5F9; border-radius: 4px; margin-top: 4px;'></div>", unsafe_allow_html=True)
-                else:
-                    fecha_iter = date(anio_sel, mes_num, dia_num)
-                    es_hoy = (fecha_iter == hoy)
-                    bg_dia = "#FEF08A" if es_hoy else "#FFFFFF"
-                    borde = "2px solid #CA8A04" if es_hoy else "1px solid #CBD5E1"
+        html_cal += "<tr>"
+        for dia_num in semana:
+            if dia_num == 0:
+                html_cal += "<td style='background-color: #F8FAFC; border-radius: 6px; height: 100px; vertical-align: top; border: 1px dashed #E2E8F0;'></td>"
+            else:
+                fecha_iter = date(anio_sel, mes_num, dia_num)
+                es_hoy = (fecha_iter == hoy)
+                bg_dia = "#FEF08A" if es_hoy else "#FFFFFF"
+                borde = "2px solid #CA8A04" if es_hoy else "1px solid #CBD5E1"
+                
+                pagos_dia = df_mes[df_mes["dia"] == dia_num] if not df_mes.empty else pd.DataFrame()
+                
+                html_cal += f"<td style='background-color: {bg_dia}; border: {borde}; border-radius: 6px; height: 100px; vertical-align: top; padding: 6px; box-sizing: border-box;'>"
+                html_cal += f"<div style='font-weight: 800; font-size: 12px; color: #1E293B; margin-bottom: 4px;'>{dia_num} {'<span style=\"font-size: 10px; color: #B45309;\">(Hoy)</span>' if es_hoy else ''}</div>"
+                
+                if not pagos_dia.empty:
+                    for _, p in pagos_dia.iterrows():
+                        if p["estado"] == "Pagado":
+                            color_b = "#22C55E"
+                            ico = "🟢"
+                        elif fecha_iter < hoy:
+                            color_b = "#EF4444"
+                            ico = "🔴"
+                        else:
+                            color_b = "#F59E0B"
+                            ico = "🟡"
+                        concepto_txt = str(p['concepto'])[:15]
+                        monto_txt = f"{p['monto']:,.2f}"
+                        html_cal += f"""<div style='background-color: {color_b}15; border-left: 3px solid {color_b}; padding: 3px 5px; margin-top: 3px; border-radius: 4px; font-size: 11px; line-height: 1.2;'>
+                            <b style='color: #0F172A;'>{ico} {concepto_txt}</b><br/>
+                            <span style='color: #334155; font-weight: 600;'>S/. {monto_txt}</span>
+                        </div>"""
+                html_cal += "</td>"
+        html_cal += "</tr>"
+    html_cal += "</tbody></table></div>"
 
-                    pagos_dia = df_mes[df_mes["dia"] == dia_num] if not df_mes.empty else pd.DataFrame()
-
-                    html_tarjeta = f"<div style='min-height: 95px; background-color: {bg_dia}; border: {borde}; border-radius: 4px; padding: 4px; margin-top: 4px; font-size: 11px;'>"
-                    html_tarjeta += f"<div style='font-weight: bold; color: #1E293B;'>{dia_num} {'(Hoy)' if es_hoy else ''}</div>"
-
-                    if not pagos_dia.empty:
-                        for _, p in pagos_dia.iterrows():
-                            if p["estado"] == "Pagado":
-                                color_b = "#22C55E"
-                                ico = "🟢"
-                            elif fecha_iter < hoy:
-                                color_b = "#EF4444"
-                                ico = "🔴"
-                            else:
-                                color_b = "#F59E0B"
-                                ico = "🟡"
-
-                            html_tarjeta += f"<div style='background-color: {color_b}15; border-left: 3px solid {color_b}; padding: 2px 4px; margin-top: 3px; border-radius: 2px;'>"
-                            html_tarjeta += f"<b>{ico} {str(p['concepto'])[:14]}</b><br/><span style='color: #0F172A;'>S/. {p['monto']:,.2f}</span>"
-                            html_tarjeta += "</div>"
-                    html_tarjeta += "</div>"
-                    st.markdown(html_tarjeta, unsafe_allow_html=True)
+    st.markdown(html_cal, unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown(f"#### 📋 Lista de Vencimientos: {mes_sel} {anio_sel}")
