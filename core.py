@@ -156,7 +156,6 @@ def get_db():
     url = st.secrets["SUPABASE_DB_URL"]
     conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
     try:
-        # Fijar explícitamente el esquema public en cada conexión
         with conn.cursor() as cur:
             cur.execute("SET search_path TO public;")
         yield conn
@@ -195,15 +194,22 @@ def query_db(query, params=(), commit=True):
                     
     pg_query = query.replace("?", "%s")
     
-    # Manejo de RETURNING id: evitar tablas que no tienen columna 'id' simple
     tiene_returning = "RETURNING" in q_limpia
     if q_limpia.startswith("INSERT") and not tiene_returning:
         if "MIEMBROS" not in q_limpia and "AUDITORIA" not in q_limpia:
             pg_query += " RETURNING id"
 
+    # Conversión estricta de NumPy (np.float64, np.int64) a tipos primitivos de Python
+    params_limpios = []
+    for p in params:
+        if hasattr(p, "item"):
+            params_limpios.append(p.item())
+        else:
+            params_limpios.append(p)
+
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(pg_query, params)
+            cur.execute(pg_query, tuple(params_limpios))
             inserted_id = None
             if q_limpia.startswith("INSERT") and ("RETURNING id" in pg_query):
                 try:
@@ -220,9 +226,10 @@ def query_db(query, params=(), commit=True):
 @st.cache_data
 def read_db(query, params=()):
     pg_query = query.replace("?", "%s")
+    params_limpios = [p.item() if hasattr(p, "item") else p for p in params]
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(pg_query, params)
+            cur.execute(pg_query, tuple(params_limpios))
             if cur.description:
                 columns = [desc[0] for desc in cur.description]
                 data = cur.fetchall()
