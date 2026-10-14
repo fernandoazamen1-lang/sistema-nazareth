@@ -6,12 +6,11 @@ from datetime import datetime, date
 import calendar
 import re
 import hashlib
-import streamlit as st
-
-# ==============================================================================
-# LIBRERÍAS PARA COMPRESIÓN Y SUBIDA A LA NUBE
-# ==============================================================================
+import hmac
+import base64
+import json
 import io
+import streamlit as st
 from PIL import Image
 from supabase import create_client, Client
 
@@ -36,7 +35,6 @@ def validar_login(usuario: str, password_plana: str):
     u_limpio = usuario.strip().lower()
     p_hash = encriptar_clave(password_plana)
     
-    # Auto-sincronización garantizada del usuario administrador
     if u_limpio == "admin" and password_plana.strip() == "Nazareth2026*":
         try:
             with get_db() as conn:
@@ -116,13 +114,34 @@ def requerir_login():
             st.markdown("---")
 
 # ==============================================================================
-# CONEXIÓN A BASE DE DATOS Y STORAGE EN LA NUBE (SUPABASE)
+# CONEXIÓN Y GENERACIÓN OFICIAL DE TOKEN SUPABASE (FIRMA MATEMÁTICA VÁLIDA)
 # ==============================================================================
+def obtener_token_supabase() -> str:
+    # Secreto maestro extraído de tu panel de Supabase
+    secret = "k/fEp2ByQnUoSnJgRP5nSyzppbd/eLqEkePocWnYLENbz+anW2jcEbGTmQXweBNdKZjjyD0s6oAgJsONCXERag=="
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {
+        "iss": "supabase",
+        "ref": "fthyebeblrmajjfzjlbk",
+        "role": "anon",
+        "iat": 1791760370,
+        "exp": 2107336370
+    }
+    
+    def b64url(b: bytes) -> str:
+        return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
+
+    h_str = b64url(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    p_str = b64url(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    to_sign = f"{h_str}.{p_str}"
+    
+    sig = b64url(hmac.new(secret.encode("utf-8"), to_sign.encode("utf-8"), hashlib.sha256).digest())
+    return f"{to_sign}.{sig}"
+
 @st.cache_resource
 def init_supabase() -> Client:
-    url: str = str(st.secrets["API_URL"]).strip()
-    # Elimina saltos de línea y espacios invisibles que rompen el token
-    key: str = re.sub(r"\s+", "", str(st.secrets["API_KEY"]))
+    url = "https://fthyebeblrmajjfzjlbk.supabase.co"
+    key = obtener_token_supabase()
     return create_client(url, key)
 
 supabase = init_supabase()
@@ -145,6 +164,7 @@ def comprimir_y_subir_foto(archivo_subido, nombre_base):
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         ruta_supabase = f"fotos_miembros/{nombre_base}_{timestamp}.jpg"
         
+        # Subir al bucket configurado
         supabase.storage.from_("archivos_iglesia").upload(
             path=ruta_supabase,
             file=byte_data,
@@ -198,17 +218,23 @@ def query_db(query, params=(), commit=True):
                     
     pg_query = query.replace("?", "%s")
     
-    if q_limpia.startswith("INSERT") and "RETURNING ID" not in q_limpia:
-        pg_query += " RETURNING id"
+    # Manejo seguro de RETURNING id para no romper tablas sin id
+    tiene_returning = "RETURNING" in q_limpia
+    if q_limpia.startswith("INSERT") and not tiene_returning:
+        # Solo intentar RETURNING id en tablas estándar de movimientos/auditoría
+        if "MIEMBROS" not in q_limpia:
+            pg_query += " RETURNING id"
 
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(pg_query, params)
             inserted_id = None
-            if q_limpia.startswith("INSERT"):
+            if q_limpia.startswith("INSERT") and ("RETURNING id" in pg_query):
                 try:
-                    inserted_id = cur.fetchone()['id']
-                except:
+                    res = cur.fetchone()
+                    if res and 'id' in res:
+                        inserted_id = res['id']
+                except Exception:
                     pass
             if commit:
                 conn.commit()
@@ -241,7 +267,7 @@ def aplicar_estilos_base():
 footer { visibility: hidden !important; }
 .stDeployButton { display: none !important; }
 
-/* Ocultar barra superior completa: Share, estrella, lápiz de edición y GitHub */
+/* Ocultar barra superior completa */
 [data-testid="stToolbar"], 
 [data-testid="stHeaderActionElements"],
 [data-testid="stToolbarActions"],
@@ -390,7 +416,7 @@ div[data-baseweb="input"] input:focus, div[data-baseweb="select"]:focus-within {
 """
     st.markdown(css_string, unsafe_allow_html=True)
 
-    # Tarjeta de identidad institucional única
+    # Identidad institucional
     st.markdown("""
 <div style="background: #FFFFFF; padding: 14px 22px; border-radius: 14px; display: flex; align-items: center; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px;">
 <div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 16px; border: 1px solid #DBEAFE;">⛪</div>
