@@ -1,6 +1,6 @@
 import streamlit as st
 import core
-import os, io, urllib.parse, calendar
+import os, io, urllib.request, urllib.parse, calendar
 from datetime import date, datetime
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
@@ -32,7 +32,153 @@ d_telefonos = dict(zip(df_m["nombre"], df_m["telefono"])) if not df_m.empty else
 df_t = core.read_db("SELECT descripcion FROM auditoria WHERE modulo='Config_Tesorero' ORDER BY id DESC LIMIT 1")
 tesorero_def = df_t.iloc[0]["descripcion"] if not df_t.empty else "Tesorero General"
 
-# --- UTILITARIOS COMPARTIDOS ---
+# ==============================================================================
+# MOTOR TIPOGRÁFICO UNICODE GARANTIZADO (Ñ, TILDES, SIGNOS)
+# ==============================================================================
+CARPETA_FUENTES = "fuentes"
+
+def asegurar_fuentes_unicode():
+    """
+    Descarga una sola vez fuentes TrueType oficiales compatibles con UTF-8
+    en el servidor para garantizar que la 'Ñ' y los acentos se rendericen perfecto.
+    """
+    os.makedirs(CARPETA_FUENTES, exist_ok=True)
+    f_reg = os.path.join(CARPETA_FUENTES, "Roboto-Regular.ttf")
+    f_bld = os.path.join(CARPETA_FUENTES, "Roboto-Bold.ttf")
+
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    if not os.path.exists(f_reg):
+        urls_reg = [
+            "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Regular.ttf",
+            "https://cdnjs.cloudflare.com/ajax/libs/dejavu-sans/2.37/ttf/DejaVuSans.ttf"
+        ]
+        for u in urls_reg:
+            try:
+                req = urllib.request.Request(u, headers=headers)
+                with urllib.request.urlopen(req, timeout=8) as resp, open(f_reg, "wb") as f:
+                    f.write(resp.read())
+                if os.path.exists(f_reg): break
+            except Exception:
+                continue
+
+    if not os.path.exists(f_bld):
+        urls_bld = [
+            "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Bold.ttf",
+            "https://cdnjs.cloudflare.com/ajax/libs/dejavu-sans/2.37/ttf/DejaVuSans-Bold.ttf"
+        ]
+        for u in urls_bld:
+            try:
+                req = urllib.request.Request(u, headers=headers)
+                with urllib.request.urlopen(req, timeout=8) as resp, open(f_bld, "wb") as f:
+                    f.write(resp.read())
+                if os.path.exists(f_bld): break
+            except Exception:
+                continue
+
+def get_font(size, bold=False):
+    """
+    Obtiene la fuente TrueType con soporte Unicode completo.
+    """
+    nombre = "Roboto-Bold.ttf" if bold else "Roboto-Regular.ttf"
+    ruta_local = os.path.join(CARPETA_FUENTES, nombre)
+
+    if not os.path.exists(ruta_local):
+        asegurar_fuentes_unicode()
+
+    if os.path.exists(ruta_local):
+        try:
+            return ImageFont.truetype(ruta_local, int(size))
+        except Exception:
+            pass
+
+    # Rutas estándar del sistema en caso de estar disponibles
+    rutas_sistema = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf"
+    ]
+    for r in rutas_sistema:
+        if os.path.exists(r):
+            try:
+                return ImageFont.truetype(r, int(size))
+            except Exception:
+                pass
+
+    try:
+        return ImageFont.load_default(size=int(size))
+    except Exception:
+        return ImageFont.load_default()
+
+def draw_center(draw, y, text, font, fill, width=800):
+    try:
+        bb = draw.textbbox((0, 0), str(text), font=font)
+        x = (width - (bb[2] - bb[0])) // 2
+    except Exception:
+        x = (width - len(str(text)) * 10) // 2
+    draw.text((int(x), int(y)), str(text), font=font, fill=fill)
+
+def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorero):
+    w, h = 800, 1140
+    img = Image.new("RGB", (w, h), "#F8FAFC")
+    dr = ImageDraw.Draw(img)
+
+    # 1. Bordes exteriores
+    dr.rounded_rectangle([(16, 16), (w - 16, h - 16)], 20, fill="#FFFFFF", outline="#1E3A8A", width=3)
+    dr.rounded_rectangle([(24, 24), (w - 24, h - 24)], 16, outline="#CA8A04", width=1)
+
+    # 2. Encabezado institucional azul
+    dr.rounded_rectangle([(32, 32), (w - 32, 165)], 14, fill="#1E3A8A")
+    draw_center(dr, 46, 'IGLESIA EVANGÉLICA "NAZARETH"', get_font(23, True), "#FFFFFF", w)
+    draw_center(dr, 85, "ASAMBLEAS DE DIOS DEL PERÚ  •  DEPARTAMENTO DE TESORERÍA", get_font(13, True), "#93C5FD", w)
+    draw_center(dr, 120, f"CONSTANCIA DE DIEZMO:  {serie}", get_font(17, True), "#FDE047", w)
+
+    # 3. Datos del hermano
+    dr.rounded_rectangle([(42, 185), (w - 42, 475)], 12, fill="#FFFFFF", outline="#E2E8F0", width=1)
+    rows = [
+        ("Hermano(a) Aportante:", str(nombre).strip().upper()[:36]),
+        ("Fecha de Recepción:", str(fecha)),
+        ("Mes Correspondiente:", str(mes).upper()),
+        ("Medio de Entrega:", str(medio)),
+        ("Detalle / Observación:", str(detalle).strip()[:40] if detalle else "Fidelidad y servicio al Señor")
+    ]
+    y = 205
+    for lbl, val in rows:
+        dr.text((65, y), lbl, font=get_font(15), fill="#64748B")
+        dr.text((310, y), val, font=get_font(16, True), fill="#0F172A")
+        dr.line([(65, y + 36), (w - 65, y + 36)], fill="#F1F5F9", width=1)
+        y += 52
+
+    # 4. Recuadro del monto
+    dr.rounded_rectangle([(42, 495), (w - 42, 615)], 14, fill="#FEF9C3", outline="#EAB308", width=2)
+    draw_center(dr, 510, "TOTAL APORTE ENTREGADO", get_font(15, True), "#854D0E", w)
+    draw_center(dr, 542, f"S/. {float(monto):,.2f}", get_font(38, True), "#1E3A8A", w)
+
+    # 5. Gratitud pastoral
+    dr.rounded_rectangle([(42, 635), (w - 42, 775)], 12, fill="#F0FDF4", outline="#86EFAC", width=1)
+    draw_center(dr, 650, "❤️  PALABRAS DE GRATITUD PASTORAL", get_font(15, True), "#166534", w)
+    draw_center(dr, 684, "¡Muchas gracias por su fidelidad, amor y compromiso con la obra de Dios!", get_font(14), "#1F2937", w)
+    draw_center(dr, 712, "Oramos para que el Señor derrame abundantes bendiciones sobre su vida,", get_font(14), "#1F2937", w)
+    draw_center(dr, 738, "multiplique su siembra y guarde con paz y provisión a toda su amada familia.", get_font(14), "#1F2937", w)
+
+    # 6. Versículo bíblico
+    dr.rounded_rectangle([(42, 795), (w - 42, 945)], 12, fill="#F8FAFC", outline="#E2E8F0", width=1)
+    draw_center(dr, 810, "PALABRA DE DIOS SOBRE EL DAR:", get_font(14, True), "#1E40AF", w)
+    draw_center(dr, 842, "«Cada uno dé como propuso en su corazón: no con tristeza,", get_font(14), "#334155", w)
+    draw_center(dr, 870, "ni por necesidad, porque Dios ama al dador alegre.»", get_font(14), "#334155", w)
+    draw_center(dr, 904, "— 2 Corintios 9:7 —", get_font(14, True), "#047857", w)
+
+    # 7. Tesorería y certificación
+    dr.rounded_rectangle([(42, 965), (w - 42, 1105)], 12, fill="#F1F5F9", outline="#CBD5E1", width=1)
+    draw_center(dr, 980, "RECEPCIONADO Y CERTIFICADO FORMALMENTE POR:", get_font(13), "#64748B", w)
+    draw_center(dr, 1012, str(tesorero).upper(), get_font(16, True), "#0F172A", w)
+    draw_center(dr, 1048, "Tesorero(a) General  •  Iglesia Evangélica \"Nazareth\"", get_font(13), "#475569", w)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+# --- UTILITARIOS DE DIEZMOS ---
 def get_diezmos():
     df = core.read_db("SELECT * FROM diezmos ORDER BY id DESC")
     if not df.empty:
@@ -53,111 +199,6 @@ def proximo_codigo():
             pass
     cant = core.read_db("SELECT COUNT(*) as t FROM diezmos").iloc[0]["t"]
     return f"D - {int(cant) + 1:05d}"
-
-def get_font(size, bold=False):
-    """
-    Carga de forma robusta fuentes TrueType con soporte Unicode completo (Ñ, tildes, signos).
-    Compatible con Linux (Streamlit Cloud), Windows y Mac OS.
-    """
-    rutas = [
-        # Linux / Debian (Entorno Streamlit Cloud)
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-        # Windows
-        "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
-        "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
-        "C:\\Windows\\Fonts\\calibrib.ttf" if bold else "C:\\Windows\\Fonts\\calibri.ttf",
-        # Mac OS
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/Library/Fonts/Arial Bold.ttf" if bold else "/Library/Fonts/Arial.ttf",
-        # Fallbacks genéricos
-        "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
-        "arialbd.ttf" if bold else "arial.ttf"
-    ]
-    for r in rutas:
-        if os.path.exists(r):
-            try:
-                return ImageFont.truetype(r, int(size))
-            except Exception:
-                pass
-        try:
-            return ImageFont.truetype(r, int(size))
-        except Exception:
-            continue
-    try:
-        return ImageFont.load_default(size=int(size))
-    except Exception:
-        return ImageFont.load_default()
-
-def draw_center(draw, y, text, font, fill, width=800):
-    try:
-        bb = draw.textbbox((0, 0), str(text), font=font)
-        x = (width - (bb[2] - bb[0])) // 2
-    except Exception:
-        x = (width - len(str(text)) * 10) // 2
-    draw.text((int(x), int(y)), str(text), font=font, fill=fill)
-
-def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorero):
-    # Lienzo de alta resolución (800 x 1140 px) para visualización óptima en móviles
-    w, h = 800, 1140
-    img = Image.new("RGB", (w, h), "#F8FAFC")
-    dr = ImageDraw.Draw(img)
-
-    # 1. Bordes exteriores dobles elegantes (anchos como enteros estrictos)
-    dr.rounded_rectangle([(16, 16), (w - 16, h - 16)], 20, fill="#FFFFFF", outline="#1E3A8A", width=3)
-    dr.rounded_rectangle([(24, 24), (w - 24, h - 24)], 16, outline="#CA8A04", width=1)
-
-    # 2. Encabezado institucional azul
-    dr.rounded_rectangle([(32, 32), (w - 32, 165)], 14, fill="#1E3A8A")
-    draw_center(dr, 46, 'IGLESIA EVANGÉLICA "NAZARETH"', get_font(23, True), "#FFFFFF", w)
-    draw_center(dr, 85, "ASAMBLEAS DE DIOS DEL PERÚ  •  DEPARTAMENTO DE TESORERÍA", get_font(13, True), "#93C5FD", w)
-    draw_center(dr, 120, f"CONSTANCIA DE DIEZMO:  {serie}", get_font(17, True), "#FDE047", w)
-
-    # 3. Tarjeta de información del aportante (width=1 entero)
-    dr.rounded_rectangle([(42, 185), (w - 42, 475)], 12, fill="#FFFFFF", outline="#E2E8F0", width=1)
-    rows = [
-        ("Hermano(a) Aportante:", str(nombre).strip().upper()[:36]),
-        ("Fecha de Recepción:", str(fecha)),
-        ("Mes Correspondiente:", str(mes).upper()),
-        ("Medio de Entrega:", str(medio)),
-        ("Detalle / Observación:", str(detalle).strip()[:40] if detalle else "Fidelidad y servicio al Señor")
-    ]
-    y = 205
-    for lbl, val in rows:
-        dr.text((65, y), lbl, font=get_font(15), fill="#64748B")
-        dr.text((310, y), val, font=get_font(16, True), fill="#0F172A")
-        dr.line([(65, y + 36), (w - 65, y + 36)], fill="#F1F5F9", width=1)
-        y += 52
-
-    # 4. Tarjeta destacada del monto
-    dr.rounded_rectangle([(42, 495), (w - 42, 615)], 14, fill="#FEF9C3", outline="#EAB308", width=2)
-    draw_center(dr, 510, "TOTAL APORTE ENTREGADO", get_font(15, True), "#854D0E", w)
-    draw_center(dr, 542, f"S/. {float(monto):,.2f}", get_font(38, True), "#1E3A8A", w)
-
-    # 5. Palabras de gratitud pastoral
-    dr.rounded_rectangle([(42, 635), (w - 42, 775)], 12, fill="#F0FDF4", outline="#86EFAC", width=1)
-    draw_center(dr, 650, "❤️  PALABRAS DE GRATITUD PASTORAL", get_font(15, True), "#166534", w)
-    draw_center(dr, 684, "¡Muchas gracias por su fidelidad, amor y compromiso con la obra de Dios!", get_font(14), "#1F2937", w)
-    draw_center(dr, 712, "Oramos para que el Señor derrame abundantes bendiciones sobre su vida,", get_font(14), "#1F2937", w)
-    draw_center(dr, 738, "multiplique su siembra y guarde con paz y provisión a toda su amada familia.", get_font(14), "#1F2937", w)
-
-    # 6. Palabra de Dios sobre el dar
-    dr.rounded_rectangle([(42, 795), (w - 42, 945)], 12, fill="#F8FAFC", outline="#E2E8F0", width=1)
-    draw_center(dr, 810, "PALABRA DE DIOS SOBRE EL DAR:", get_font(14, True), "#1E40AF", w)
-    draw_center(dr, 842, "«Cada uno dé como propuso en su corazón: no con tristeza,", get_font(14), "#334155", w)
-    draw_center(dr, 870, "ni por necesidad, porque Dios ama al dador alegre.»", get_font(14), "#334155", w)
-    draw_center(dr, 904, "— 2 Corintios 9:7 —", get_font(14, True), "#047857", w)
-
-    # 7. Sección de certificación y tesorería
-    dr.rounded_rectangle([(42, 965), (w - 42, 1105)], 12, fill="#F1F5F9", outline="#CBD5E1", width=1)
-    draw_center(dr, 980, "RECEPCIONADO Y CERTIFICADO FORMALMENTE POR:", get_font(13), "#64748B", w)
-    draw_center(dr, 1012, str(tesorero).upper(), get_font(16, True), "#0F172A", w)
-    draw_center(dr, 1048, "Tesorero(a) General  •  Iglesia Evangélica \"Nazareth\"", get_font(13), "#475569", w)
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
-    return buf.getvalue()
 
 # ==============================================================================
 # FLUJO EN 2 CLICS: DESCARGAR IMAGEN + ABRIR WHATSAPP
@@ -396,7 +437,6 @@ elif opcion == "Ver Registros por Mes":
         m2.metric("En Efectivo", f"S/. {efe:,.2f}")
         m3.metric("En Banco", f"S/. {ban:,.2f}")
 
-        # Botón para descargar reporte PDF del mes
         if not df_f.empty:
             pdf_mes_bytes = generar_pdf_reporte_mensual(df_f, anio_s, mes_s, tot, efe, ban)
             col_b_pdf, _ = st.columns([3, 4])
@@ -420,7 +460,6 @@ elif opcion == "Ver Registros por Mes":
             use_container_width=True, hide_index=True
         )
 
-        # Sincronización de asientos contables con Tesorería
         st.markdown("---")
         u_dia = calendar.monthrange(anio_s, core.MESES_NUM[mes_s])[1]
         f_fin = f"{anio_s}-{core.MESES_NUM[mes_s]:02d}-{u_dia:02d}"
