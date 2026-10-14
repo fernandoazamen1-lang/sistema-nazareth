@@ -38,7 +38,7 @@ def validar_login(usuario: str, password_plana: str):
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO usuarios_sistema (usuario, password_hash, nombre, rol, activo)
+                        INSERT INTO public.usuarios_sistema (usuario, password_hash, nombre, rol, activo)
                         VALUES ('admin', %s, 'Administrador General', 'Administrador', TRUE)
                         ON CONFLICT (usuario) 
                         DO UPDATE SET password_hash = %s, activo = TRUE
@@ -53,7 +53,7 @@ def validar_login(usuario: str, password_plana: str):
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT usuario, nombre, rol FROM usuarios_sistema WHERE LOWER(TRIM(usuario)) = %s AND password_hash = %s AND activo = TRUE",
+                    "SELECT usuario, nombre, rol FROM public.usuarios_sistema WHERE LOWER(TRIM(usuario)) = %s AND password_hash = %s AND activo = TRUE",
                     (u_limpio, p_hash)
                 )
                 fila = cur.fetchone()
@@ -156,6 +156,9 @@ def get_db():
     url = st.secrets["SUPABASE_DB_URL"]
     conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
     try:
+        # Fijar explícitamente el esquema public en cada conexión
+        with conn.cursor() as cur:
+            cur.execute("SET search_path TO public;")
         yield conn
     finally:
         conn.close()
@@ -169,7 +172,7 @@ def es_periodo_cerrado(fecha_param):
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT estado FROM cierres_mensuales WHERE periodo = %s", (periodo,))
+                cur.execute("SELECT estado FROM public.cierres_mensuales WHERE periodo = %s", (periodo,))
                 fila = cur.fetchone()
                 if fila and fila["estado"] == "Cerrado": return True
     except Exception: pass
@@ -192,9 +195,10 @@ def query_db(query, params=(), commit=True):
                     
     pg_query = query.replace("?", "%s")
     
+    # Manejo de RETURNING id: evitar tablas que no tienen columna 'id' simple
     tiene_returning = "RETURNING" in q_limpia
     if q_limpia.startswith("INSERT") and not tiene_returning:
-        if "MIEMBROS" not in q_limpia:
+        if "MIEMBROS" not in q_limpia and "AUDITORIA" not in q_limpia:
             pg_query += " RETURNING id"
 
     with get_db() as conn:
@@ -226,7 +230,7 @@ def read_db(query, params=()):
             return pd.DataFrame()
 
 def registrar_log(modulo, accion, descripcion):
-    query_db("INSERT INTO auditoria (fecha_hora, modulo, accion, descripcion) VALUES (%s, %s, %s, %s)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), modulo, accion, descripcion))
+    query_db("INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (%s, %s, %s, %s)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), modulo, accion, descripcion))
 
 # ==============================================================================
 # DISEÑO Y ESTILOS GLOBALES
