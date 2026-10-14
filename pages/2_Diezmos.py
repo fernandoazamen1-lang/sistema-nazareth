@@ -14,12 +14,28 @@ st.set_page_config(page_title="Módulo de Diezmos", page_icon="📖", layout="wi
 core.requerir_login()
 core.aplicar_estilos_base()
 
-# Asegurar columna persistente de comprobante (Sintaxis PostgreSQL)
+# Asegurar tablas requeridas y columnas en public (PostgreSQL)
 try:
     with core.get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                ALTER TABLE public.diezmos ADD COLUMN IF NOT EXISTS codigo_comprobante TEXT DEFAULT ''
+                CREATE TABLE IF NOT EXISTS public.movimientos (
+                    id SERIAL PRIMARY KEY,
+                    fecha DATE NOT NULL,
+                    tipo TEXT NOT NULL,
+                    categoria TEXT NOT NULL,
+                    subcategoria TEXT DEFAULT '',
+                    fondo TEXT DEFAULT 'General',
+                    monto NUMERIC(12, 2) NOT NULL,
+                    medio TEXT DEFAULT 'Efectivo',
+                    comprobante TEXT DEFAULT '',
+                    detalle TEXT DEFAULT '',
+                    responsable TEXT DEFAULT '',
+                    archivo_foto TEXT DEFAULT '',
+                    estado_credito TEXT DEFAULT 'Cobrado',
+                    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                ALTER TABLE public.diezmos ADD COLUMN IF NOT EXISTS codigo_comprobante TEXT DEFAULT '';
             """)
         conn.commit()
 except Exception:
@@ -384,9 +400,9 @@ elif opcion == "Ver Registros por Mes":
         if med_s != "Todos":
             df_f = df_f[df_f["medio"] == med_s]
 
-        tot = df_f["monto"].sum() if not df_f.empty else 0.0
-        efe = df_f[df_f["medio"] == "Efectivo"]["monto"].sum() if not df_f.empty else 0.0
-        ban = df_f[df_f["medio"] != "Efectivo"]["monto"].sum() if not df_f.empty else 0.0
+        tot = float(df_f["monto"].sum()) if not df_f.empty else 0.0
+        efe = float(df_f[df_f["medio"] == "Efectivo"]["monto"].sum()) if not df_f.empty else 0.0
+        ban = float(df_f[df_f["medio"] != "Efectivo"]["monto"].sum()) if not df_f.empty else 0.0
 
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Ingresado", f"S/. {tot:,.2f}")
@@ -432,12 +448,12 @@ elif opcion == "Ver Registros por Mes":
                 if efe > 0:
                     core.query_db(
                         "INSERT INTO public.movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito) VALUES (?, 'Ingreso', 'Diezmos Consolidado', 'Diezmos en Efectivo', 'General', ?, 'Efectivo', ?, ?, 'Tesorería', '', 'Cobrado')",
-                        (f_fin, efe, c_efe, f"Diezmos efectivo {mes_s} {anio_s}")
+                        (f_fin, round(float(efe), 2), c_efe, f"Diezmos efectivo {mes_s} {anio_s}")
                     )
                 if ban > 0:
                     core.query_db(
                         "INSERT INTO public.movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito) VALUES (?, 'Ingreso', 'Diezmos Consolidado', 'Diezmos en Banco / Transferencia', 'General', ?, 'Depósito / Transferencia', ?, ?, 'Tesorería', '', 'Cobrado')",
-                        (f_fin, ban, c_ban, f"Diezmos banco {mes_s} {anio_s}")
+                        (f_fin, round(float(ban), 2), c_ban, f"Diezmos banco {mes_s} {anio_s}")
                     )
                 core.registrar_log("Diezmos", "Tesorería", f"Asentados diezmos de {mes_s} {anio_s}")
                 st.toast("✅ Asientos asentados en Tesorería con éxito.")
