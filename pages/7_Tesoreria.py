@@ -2,7 +2,6 @@ import streamlit as st
 import core
 import io
 import pandas as pd
-import numpy as np
 from datetime import date, datetime
 import plotly.graph_objects as go
 from reportlab.lib.pagesizes import landscape, letter
@@ -10,17 +9,17 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 
-st.set_page_config(page_title="Tesorería y Movimientos", page_icon="🏛️", layout="wide")
+st.set_page_config(
+    page_title="Tesorería y Movimientos", 
+    page_icon="🏛️", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+core.requerir_login()
 core.aplicar_estilos_base()
 
-st.subheader("🏛️ Libro de Tesorería y Movimientos")
-opcion = st.radio(
-    "Sección:", 
-    ["Libro Detallado", "Evolución y Gráficos", "Registrar Movimiento", "⚙️ Modificar o Eliminar"], 
-    horizontal=True
-)
-
-df_fondos = core.read_db("SELECT nombre FROM fondos_catalogo")
+# Catálogo de fondos
+df_fondos = core.read_db("SELECT nombre FROM public.fondos_catalogo")
 fondos = df_fondos["nombre"].tolist() if not df_fondos.empty else ["General"]
 
 # ==============================================================================
@@ -223,10 +222,51 @@ def generar_excel_tesoreria(df_exp):
     return output.getvalue()
 
 # ==============================================================================
+# CABECERA Y MENÚ DE ACCIONES UNIVERSAL (PC Y CELULAR)
+# ==============================================================================
+core.banner_modulo("🏛️", "Libro de Tesorería y Movimientos", "Control de ingresos, egresos, saldos por fondo y estados financieros")
+
+LISTA_SECCIONES = [
+    "📖 Libro Detallado", 
+    "📈 Evolución y Gráficos", 
+    "➕ Registrar Movimiento", 
+    "⚙️ Modificar o Eliminar"
+]
+
+if "opcion_tesoreria" not in st.session_state:
+    st.session_state["opcion_tesoreria"] = LISTA_SECCIONES[0]
+
+if "mostrar_menu_tesoreria" not in st.session_state:
+    st.session_state["mostrar_menu_tesoreria"] = True
+
+col_btn_m, col_info_m = st.columns([1.6, 6])
+with col_btn_m:
+    label_btn = "🔼 Ocultar Menú" if st.session_state["mostrar_menu_tesoreria"] else "☰ Menú de Opciones"
+    if st.button(label_btn, use_container_width=True, type="primary" if not st.session_state["mostrar_menu_tesoreria"] else "secondary"):
+        st.session_state["mostrar_menu_tesoreria"] = not st.session_state["mostrar_menu_tesoreria"]
+        st.rerun()
+
+with col_info_m:
+    if not st.session_state["mostrar_menu_tesoreria"]:
+        st.caption(f"Sección activa: **{st.session_state['opcion_tesoreria']}** (Pulsa '☰ Menú de Opciones' para cambiar)")
+
+if st.session_state["mostrar_menu_tesoreria"]:
+    idx_def = LISTA_SECCIONES.index(st.session_state["opcion_tesoreria"]) if st.session_state["opcion_tesoreria"] in LISTA_SECCIONES else 0
+    sel_sec = st.selectbox(
+        "Seleccione la sección de Tesorería:",
+        LISTA_SECCIONES,
+        index=idx_def
+    )
+    st.session_state["opcion_tesoreria"] = sel_sec
+
+opcion = st.session_state["opcion_tesoreria"]
+st.markdown("---")
+
+# ==============================================================================
 # 1. LIBRO DETALLADO
 # ==============================================================================
-if opcion == "Libro Detallado":
-    df_mov = core.read_db("SELECT * FROM movimientos ORDER BY date(fecha) DESC, id DESC")
+if opcion == "📖 Libro Detallado":
+    df_mov = core.read_db("SELECT * FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
     if df_mov.empty:
         st.info("No hay movimientos registrados en el libro de Tesorería.")
     else:
@@ -249,8 +289,8 @@ if opcion == "Libro Detallado":
                 df_fil["comprobante"].astype(str).str.lower().str.contains(txt_l)
             ]
 
-        tot_ing = df_fil[df_fil["tipo"] == "Ingreso"]["monto"].sum()
-        tot_egr = df_fil[df_fil["tipo"] == "Egreso"]["monto"].sum()
+        tot_ing = float(df_fil[df_fil["tipo"] == "Ingreso"]["monto"].sum())
+        tot_egr = float(df_fil[df_fil["tipo"] == "Egreso"]["monto"].sum())
         saldo_neto = tot_ing - tot_egr
 
         m1, m2, m3 = st.columns(3)
@@ -261,8 +301,8 @@ if opcion == "Libro Detallado":
         st.markdown("##### 💼 Distribución por Fondos:")
         cols_fondos = st.columns(min(len(fondos), 5))
         for i, f_nom in enumerate(fondos[:5]):
-            ing_f = df_mov[(df_mov["fondo"] == f_nom) & (df_mov["tipo"] == "Ingreso")]["monto"].sum()
-            egr_f = df_mov[(df_mov["fondo"] == f_nom) & (df_mov["tipo"] == "Egreso")]["monto"].sum()
+            ing_f = float(df_mov[(df_mov["fondo"] == f_nom) & (df_mov["tipo"] == "Ingreso")]["monto"].sum())
+            egr_f = float(df_mov[(df_mov["fondo"] == f_nom) & (df_mov["tipo"] == "Egreso")]["monto"].sum())
             cols_fondos[i].metric(f_nom, f"S/. {ing_f - egr_f:,.2f}")
 
         st.markdown("---")
@@ -292,14 +332,15 @@ if opcion == "Libro Detallado":
             "fondo": "Fondo", "monto": "Monto (S/.)", "medio": "Medio",
             "comprobante": "Comprobante / Folio", "responsable": "Responsable", "detalle": "Detalle"
         }
-        df_mostrar = df_fil[list(map_cols_ver.keys())].rename(columns=map_cols_ver)
+        cols_existentes = [c for c in map_cols_ver.keys() if c in df_fil.columns]
+        df_mostrar = df_fil[cols_existentes].rename(columns=map_cols_ver)
         st.dataframe(df_mostrar.style.format({"Monto (S/.)": "S/. {:,.2f}"}), use_container_width=True, hide_index=True)
 
 # ==============================================================================
-# 2. EVOLUCIÓN Y GRÁFICOS (3 BARRAS + DICTAMEN EN PDF)
+# 2. EVOLUCIÓN Y GRÁFICOS
 # ==============================================================================
-elif opcion == "Evolución y Gráficos":
-    df_mov = core.read_db("SELECT fecha, tipo, monto, fondo FROM movimientos WHERE comprobante NOT IN ('ASIENTO-APERTURA') AND estado_credito != 'A Credito' AND fecha IS NOT NULL")
+elif opcion == "📈 Evolución y Gráficos":
+    df_mov = core.read_db("SELECT fecha, tipo, monto, fondo FROM public.movimientos WHERE comprobante NOT IN ('ASIENTO-APERTURA') AND estado_credito != 'A Credito' AND fecha IS NOT NULL")
     
     if df_mov.empty:
         st.info("No hay suficientes datos registrados para generar gráficas.")
@@ -363,8 +404,8 @@ elif opcion == "Evolución y Gráficos":
         mes_num_sel = core.MESES.index(mes_analisis) + 1
         df_mes_sel = df_anio[df_anio["MesNum"] == mes_num_sel]
 
-        ing_mes = df_mes_sel[df_mes_sel["tipo"] == "Ingreso"]["monto"].sum()
-        egr_mes = df_mes_sel[df_mes_sel["tipo"] == "Egreso"]["monto"].sum()
+        ing_mes = float(df_mes_sel[df_mes_sel["tipo"] == "Ingreso"]["monto"].sum())
+        egr_mes = float(df_mes_sel[df_mes_sel["tipo"] == "Egreso"]["monto"].sum())
         sal_mes = ing_mes - egr_mes
         tasa_ahorro = ((sal_mes / ing_mes) * 100) if ing_mes > 0 else 0.0
         relacion_gasto = ((egr_mes / ing_mes) * 100) if ing_mes > 0 else 0.0
@@ -377,8 +418,8 @@ elif opcion == "Evolución y Gráficos":
 
         df_fondos_res = []
         for fn in fondos:
-            i_f = df_mes_sel[(df_mes_sel["fondo"] == fn) & (df_mes_sel["tipo"] == "Ingreso")]["monto"].sum()
-            e_f = df_mes_sel[(df_mes_sel["fondo"] == fn) & (df_mes_sel["tipo"] == "Egreso")]["monto"].sum()
+            i_f = float(df_mes_sel[(df_mes_sel["fondo"] == fn) & (df_mes_sel["tipo"] == "Ingreso")]["monto"].sum())
+            e_f = float(df_mes_sel[(df_mes_sel["fondo"] == fn) & (df_mes_sel["tipo"] == "Egreso")]["monto"].sum())
             df_fondos_res.append({"Fondo": fn, "Ingreso": i_f, "Egreso": e_f, "Saldo": i_f - e_f})
         df_fondos_m = pd.DataFrame(df_fondos_res)
 
@@ -420,11 +461,11 @@ elif opcion == "Evolución y Gráficos":
 # ==============================================================================
 # 3. REGISTRAR MOVIMIENTO MANUAL
 # ==============================================================================
-elif opcion == "Registrar Movimiento":
+elif opcion == "➕ Registrar Movimiento":
     t_mov = st.radio("Tipo:", ["Egreso (Gasto)", "Ingreso"], horizontal=True)
     tipo_cl = "Egreso" if "Egreso" in t_mov else "Ingreso"
 
-    cats = core.read_db("SELECT categoria, subcategoria FROM rubros_catalogo WHERE tipo=?", (tipo_cl,))
+    cats = core.read_db("SELECT categoria, subcategoria FROM public.rubros_catalogo WHERE tipo=?", (tipo_cl,))
     dict_c = {}
     if not cats.empty:
         for c, g in cats.groupby("categoria"): 
@@ -432,7 +473,7 @@ elif opcion == "Registrar Movimiento":
     else:
         dict_c = {"General": ["General"]}
 
-    df_r = core.read_db("SELECT nombre FROM responsables_catalogo")
+    df_r = core.read_db("SELECT nombre FROM public.responsables_catalogo")
     resps = df_r["nombre"].tolist() if not df_r.empty else ["Tesorero"]
 
     anio, mes, num_m, f_sug = core.selector_periodo("mov_reg")
@@ -453,9 +494,9 @@ elif opcion == "Registrar Movimiento":
 
         if st.form_submit_button("💾 Guardar Transacción", type="primary"):
             core.query_db("""
-                INSERT INTO movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
+                INSERT INTO public.movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'Cobrado')
-            """, (str(fecha), tipo_cl, cat, subcat, fondo, monto, medio, comp.strip(), det.strip(), resp))
+            """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp.strip(), det.strip(), resp))
             core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp.strip()})")
             st.toast("✅ Movimiento guardado en Tesorería.")
             st.rerun()
@@ -465,7 +506,7 @@ elif opcion == "Registrar Movimiento":
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### ⚙️ Gestión de Asientos de Tesorería (Modificar o Eliminar)")
-    df_todos_mov = core.read_db("SELECT * FROM movimientos ORDER BY date(fecha) DESC, id DESC")
+    df_todos_mov = core.read_db("SELECT * FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
 
     if df_todos_mov.empty:
         st.info("No hay transacciones registradas en Tesorería.")
@@ -528,7 +569,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                 idx_fnd = fondos.index(reg_mov["fondo"]) if reg_mov["fondo"] in fondos else 0
                 idx_med = core.MEDIOS.index(reg_mov["medio"]) if reg_mov["medio"] in core.MEDIOS else 0
 
-                df_r_act = core.read_db("SELECT nombre FROM responsables_catalogo")
+                df_r_act = core.read_db("SELECT nombre FROM public.responsables_catalogo")
                 resps_act = df_r_act["nombre"].tolist() if not df_r_act.empty else ["Tesorero"]
                 idx_resp = resps_act.index(reg_mov["responsable"]) if reg_mov["responsable"] in resps_act else 0
 
@@ -552,12 +593,12 @@ elif opcion == "⚙️ Modificar o Eliminar":
 
                 if btn_guardar_mov:
                     core.query_db("""
-                        UPDATE movimientos SET
+                        UPDATE public.movimientos SET
                             fecha = ?, tipo = ?, categoria = ?, subcategoria = ?,
                             fondo = ?, monto = ?, medio = ?, comprobante = ?,
                             responsable = ?, detalle = ?
                         WHERE id = ?
-                    """, (str(e_fecha), e_tipo, e_cat.strip(), e_subcat.strip(), e_fondo, e_monto, e_medio, e_comp.strip(), e_resp, e_det.strip(), id_mov_sel))
+                    """, (str(e_fecha), e_tipo, e_cat.strip(), e_subcat.strip(), e_fondo, round(float(e_monto), 2), e_medio, e_comp.strip(), e_resp, e_det.strip(), id_mov_sel))
 
                     core.registrar_log("Tesorería", "Edición", f"Actualizado asiento ID #{id_mov_sel} por S/. {e_monto:,.2f}")
                     st.toast("✅ Asiento contable actualizado correctamente.")
@@ -566,7 +607,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
             elif accion_m == "🗑️ Eliminar Transacción":
                 st.warning(f"⚠️ ¿Confirma eliminar definitivamente la transacción **ID #{reg_mov['id']}** por **S/. {reg_mov['monto']:,.2f}** ({reg_mov['detalle']})?")
                 if st.button("Eliminar Definitivamente", type="primary"):
-                    core.query_db("DELETE FROM movimientos WHERE id=?", (id_mov_sel,))
+                    core.query_db("DELETE FROM public.movimientos WHERE id=?", (id_mov_sel,))
                     core.registrar_log("Tesorería", "Eliminación", f"Eliminado asiento ID #{id_mov_sel} de S/. {reg_mov['monto']:,.2f}")
                     st.toast("🗑️ Transacción eliminada de Tesorería.")
                     st.rerun()
