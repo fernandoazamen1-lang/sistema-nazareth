@@ -1,3 +1,4 @@
+core.verificar_acceso_pagina("Panel Principal")
 import streamlit as st
 import core
 import os
