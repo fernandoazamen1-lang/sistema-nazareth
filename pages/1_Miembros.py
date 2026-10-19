@@ -9,59 +9,70 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 
-st.set_page_config(page_title="Padrón de Miembros", page_icon="👥", layout="wide")
+# 1. Configuración de página (primera orden de Streamlit)
+st.set_page_config(
+    page_title="Padrón de Miembros", 
+    page_icon="👥", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# 2. Seguridad y autenticación
 core.requerir_login()
-core.inicializar_bd()
 core.verificar_acceso_pagina("Miembros")
 core.aplicar_estilos_base()
 
 # ==============================================================================
-# MIGRACIÓN SEGURA Y AISLADA COLUMNA POR COLUMNA (POSTGRESQL COMPATIBLE)
+# ASEGURAR ESTRUCTURA DE TABLA EN ESQUEMA PUBLIC (POSTGRESQL)
 # ==============================================================================
-columnas_miembros = [
-    ("telefono", "TEXT DEFAULT ''"),
-    ("direccion", "TEXT DEFAULT ''"),
-    ("fecha_nacimiento", "TEXT DEFAULT ''"),
-    ("estado_civil", "TEXT DEFAULT 'Soltero(a)'"),
-    ("bautizado", "TEXT DEFAULT 'No'"),
-    ("miembro_pleno", "TEXT DEFAULT 'No'"),
-    ("cargo_eclesiastico", "TEXT DEFAULT 'Miembro Activo'"),
-    ("foto", "TEXT DEFAULT ''"),
-    ("fecha_registro", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-]
-
 try:
     with core.get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("CREATE TABLE IF NOT EXISTS miembros (id_miembro TEXT PRIMARY KEY, nombre TEXT NOT NULL);")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS public.miembros (
+                    id_miembro TEXT PRIMARY KEY,
+                    nombre TEXT NOT NULL,
+                    telefono TEXT DEFAULT '',
+                    direccion TEXT DEFAULT '',
+                    fecha_nacimiento TEXT DEFAULT '',
+                    estado_civil TEXT DEFAULT 'Soltero(a)',
+                    bautizado TEXT DEFAULT 'No',
+                    miembro_pleno TEXT DEFAULT 'No',
+                    cargo_eclesiastico TEXT DEFAULT 'Miembro Activo',
+                    foto TEXT DEFAULT '',
+                    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '';
+                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS direccion TEXT DEFAULT '';
+                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS fecha_nacimiento TEXT DEFAULT '';
+                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS estado_civil TEXT DEFAULT 'Soltero(a)';
+                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS bautizado TEXT DEFAULT 'No';
+                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS miembro_pleno TEXT DEFAULT 'No';
+                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS cargo_eclesiastico TEXT DEFAULT 'Miembro Activo';
+                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS foto TEXT DEFAULT '';
+                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+            """)
         conn.commit()
 except Exception:
     pass
 
-for col_nom, col_def in columnas_miembros:
-    try:
-        with core.get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"ALTER TABLE miembros ADD COLUMN IF NOT EXISTS {col_nom} {col_def};")
-            conn.commit()
-    except Exception:
-        pass
-
-CARPETA_FOTOS = "fotos_miembros"
-os.makedirs(CARPETA_FOTOS, exist_ok=True)
-
 st.subheader("👥 Padrón General de Miembros")
+
 opcion = st.radio(
     "Acción:", 
     ["Ver Miembros", "Registrar Miembro", "✏️ Editar Miembro", "📥 Carga Masiva (Excel)", "Eliminar Miembro"], 
     horizontal=True
 )
 
-# Obtener miembros con orden explícito
+st.markdown("---")
+
+# Obtener miembros registrados
 df_m = core.read_db("""
-    SELECT ROW_NUMBER() OVER(ORDER BY COALESCE(fecha_registro, '1970-01-01'::timestamp) ASC, id_miembro ASC) as nro_orden, * 
-    FROM miembros 
-    ORDER BY COALESCE(fecha_registro, '1970-01-01'::timestamp) ASC, id_miembro ASC
+    SELECT 
+        ROW_NUMBER() OVER(ORDER BY id_miembro ASC) AS nro_orden, 
+        * 
+    FROM public.miembros 
+    ORDER BY nombre ASC
 """)
 
 LISTA_CARGOS = [
@@ -78,14 +89,20 @@ LISTA_CARGOS = [
     "Maestro(a) Escuela Dominical"
 ]
 
+# ==============================================================================
+# GENERADORES DE REPORTES (PDF Y EXCEL)
+# ==============================================================================
 def generar_pdf_padron(df_exportar, columnas_visibles):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=20, rightMargin=20, topMargin=25, bottomMargin=25)
     elementos = []
 
     t_header = Table([[
-        Paragraph("<b>IGLESIA EVANGÉLICA \"NAZARETH\" — ASAMBLEAS DE DIOS DEL PERÚ</b><br/><font size=8.5 color='#334155'>PADRÓN OFICIAL DE MIEMBROS REGISTRADOS</font>",
-                  ParagraphStyle('H1', fontName='Helvetica-Bold', fontSize=10.5, alignment=1))
+        Paragraph(
+            "<b>IGLESIA EVANGÉLICA \"NAZARETH\" — ASAMBLEAS DE DIOS DEL PERÚ</b><br/>"
+            "<font size=8.5 color='#334155'>PADRÓN OFICIAL DE MIEMBROS REGISTRADOS</font>",
+            ParagraphStyle('H1', fontName='Helvetica-Bold', fontSize=10.5, alignment=1)
+        )
     ]], colWidths=[752])
     t_header.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#EFF6FF")),
@@ -105,7 +122,7 @@ def generar_pdf_padron(df_exportar, columnas_visibles):
         datos_tabla.append(fila_datos)
 
     ancho_disponible = 752
-    ancho_nro = 30
+    ancho_nro = 32
     ancho_resto = (ancho_disponible - ancho_nro) / max(1, len(columnas_visibles))
     anchos = [ancho_nro] + [ancho_resto] * len(columnas_visibles)
 
@@ -222,7 +239,7 @@ if opcion == "Ver Miembros":
 
         col_pdf, col_xls, _ = st.columns([3, 3, 4])
         with col_pdf:
-            if columnas_seleccionadas:
+            if columnas_seleccionadas and not df_filtrado.empty:
                 pdf_bytes = generar_pdf_padron(df_filtrado, columnas_seleccionadas)
                 st.download_button(
                     label="📄 Descargar Padrón en PDF",
@@ -231,7 +248,7 @@ if opcion == "Ver Miembros":
                     mime="application/pdf"
                 )
         with col_xls:
-            if columnas_seleccionadas:
+            if columnas_seleccionadas and not df_filtrado.empty:
                 excel_bytes = generar_excel_bytes(df_filtrado[cols_finales])
                 st.download_button(
                     label="📊 Descargar Padrón en Excel (.xlsx)",
@@ -252,7 +269,9 @@ if opcion == "Ver Miembros":
                 col_foto, col_info = st.columns([1, 3])
                 with col_foto:
                     foto_path = str(datos_m.get("foto", ""))
-                    if foto_path and (foto_path.startswith("http") or os.path.exists(foto_path)):
+                    if foto_path and foto_path.startswith("http"):
+                        st.image(foto_path, width=180, caption=f"Registro N° {datos_m['nro_orden']}")
+                    elif foto_path and os.path.exists(foto_path):
                         st.image(foto_path, width=180, caption=f"Registro N° {datos_m['nro_orden']}")
                     else:
                         st.info("Sin Fotografía\nRegistrada")
@@ -271,7 +290,7 @@ if opcion == "Ver Miembros":
                         st.write(f"✝️ **Cargo Eclesiástico:** {datos_m.get('cargo_eclesiastico', 'Miembro Activo')}")
 
 # ==============================================================================
-# VISTA 2: REGISTRAR MIEMBRO (PROTEGIDO)
+# VISTA 2: REGISTRAR MIEMBRO
 # ==============================================================================
 elif opcion == "Registrar Miembro":
     st.markdown("#### ➕ Formulario de Afiliación / Registro Eclesiástico")
@@ -307,7 +326,7 @@ elif opcion == "Registrar Miembro":
 
             try:
                 core.query_db("""
-                    INSERT INTO miembros 
+                    INSERT INTO public.miembros 
                     (id_miembro, nombre, telefono, direccion, fecha_nacimiento, estado_civil, bautizado, miembro_pleno, cargo_eclesiastico, foto)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (id_miembro) DO UPDATE SET
@@ -319,7 +338,7 @@ elif opcion == "Registrar Miembro":
                     bautizado = EXCLUDED.bautizado,
                     miembro_pleno = EXCLUDED.miembro_pleno,
                     cargo_eclesiastico = EXCLUDED.cargo_eclesiastico,
-                    foto = CASE WHEN EXCLUDED.foto <> '' THEN EXCLUDED.foto ELSE miembros.foto END
+                    foto = CASE WHEN EXCLUDED.foto <> '' THEN EXCLUDED.foto ELSE public.miembros.foto END
                 """, (
                     d_id.strip(), d_nom.strip(), d_tel.strip(), d_dir.strip(),
                     str(d_fnac), d_civil, d_baut, d_pleno, d_cargo, ruta_foto_guardada
@@ -365,7 +384,9 @@ elif opcion == "✏️ Editar Miembro":
         col_prev_foto, col_prev_info = st.columns([1, 4])
         with col_prev_foto:
             foto_existente = str(datos_actuales.get("foto", ""))
-            if foto_existente and (foto_existente.startswith("http") or os.path.exists(foto_existente)):
+            if foto_existente and foto_existente.startswith("http"):
+                st.image(foto_existente, width=130, caption="Foto actual")
+            elif foto_existente and os.path.exists(foto_existente):
                 st.image(foto_existente, width=130, caption="Foto actual")
             else:
                 st.caption("📷 Sin foto actual")
@@ -398,15 +419,12 @@ elif opcion == "✏️ Editar Miembro":
                         nueva_ruta = core.comprimir_y_subir_foto(edit_foto_file, f"miembro_{edit_id.strip()}")
                         if nueva_ruta:
                             ruta_foto_final = nueva_ruta
-                            if foto_existente and not foto_existente.startswith("http") and os.path.exists(foto_existente):
-                                try: os.remove(foto_existente)
-                                except Exception: pass
                     except Exception as e_f:
                         st.warning(f"Aviso al subir foto: {e_f}")
 
                 try:
                     core.query_db("""
-                        UPDATE miembros SET
+                        UPDATE public.miembros SET
                             id_miembro = ?,
                             nombre = ?,
                             telefono = ?,
@@ -424,9 +442,12 @@ elif opcion == "✏️ Editar Miembro":
                         ruta_foto_final, dni_actual
                     ))
 
+                    # Si cambió el DNI o el nombre, sincronizar en el historial de diezmos
                     if dni_actual != edit_id.strip() or datos_actuales["nombre"] != edit_nom.strip():
                         core.query_db("""
-                            UPDATE diezmos SET id_miembro = ?, nombre_miembro = ? WHERE id_miembro = ?
+                            UPDATE public.diezmos 
+                            SET id_miembro = ?, nombre_miembro = ? 
+                            WHERE id_miembro = ?
                         """, (edit_id.strip(), edit_nom.strip(), dni_actual))
 
                     core.registrar_log("Miembros", "Edición", f"Actualizado miembro {edit_nom.strip()} (DNI: {edit_id.strip()})")
@@ -474,7 +495,7 @@ elif opcion == "📥 Carga Masiva (Excel)":
 
             columnas_presentes = [c for c in mapa_import.keys() if c in df_import.columns]
             if "DNI_Codigo" not in columnas_presentes or "Nombres_y_Apellidos" not in columnas_presentes:
-                st.error("❌ El archivo no contiene las columnas requeridas: `DNI_Codigo` y `Nombres_y_Apellidos`.")
+                st.error("❌ El archivo no contiene las columnas obligatorias: `DNI_Codigo` y `Nombres_y_Apellidos`.")
             else:
                 st.markdown(f"##### 📋 Vista Previa de Registros a Importar ({len(df_import)} filas):")
                 st.dataframe(df_import, use_container_width=True)
@@ -519,9 +540,9 @@ elif opcion == "📥 Carga Masiva (Excel)":
                         d_cargo = "Miembro Activo" if d_cargo.lower() == "nan" or not d_cargo else d_cargo
 
                         core.query_db("""
-                            INSERT INTO miembros 
+                            INSERT INTO public.miembros 
                             (id_miembro, nombre, telefono, direccion, fecha_nacimiento, estado_civil, bautizado, miembro_pleno, cargo_eclesiastico, foto)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT foto FROM miembros WHERE id_miembro = ?), ''))
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '')
                             ON CONFLICT (id_miembro) DO UPDATE SET
                             nombre = EXCLUDED.nombre,
                             telefono = EXCLUDED.telefono,
@@ -532,12 +553,12 @@ elif opcion == "📥 Carga Masiva (Excel)":
                             miembro_pleno = EXCLUDED.miembro_pleno,
                             cargo_eclesiastico = EXCLUDED.cargo_eclesiastico
                         """, (
-                            d_id, d_nom, d_tel, d_dir, d_fnac, d_civil, d_baut, d_pleno, d_cargo, d_id
+                            d_id, d_nom, d_tel, d_dir, d_fnac, d_civil, d_baut, d_pleno, d_cargo
                         ))
                         registros_nuevos += 1
 
                     core.registrar_log("Miembros", "Carga Masiva", f"Importados/actualizados {registros_nuevos} miembros.")
-                    st.success(f"✅ ¡Carga completada con éxito! Se procesaron {registros_nuevos} registros correctamente (Omitidos: {registros_omitidos}).")
+                    st.success(f"✅ ¡Carga completada con éxito! Se procesaron {registros_nuevos} registros (Omitidos: {registros_omitidos}).")
                     st.rerun()
         except Exception as e:
             st.error(f"Error al leer el archivo Excel: {e}")
@@ -552,14 +573,18 @@ elif opcion == "Eliminar Miembro":
     else:
         m_del = st.selectbox("Seleccione el Miembro que desea retirar del padrón:", df_m["nombre"].tolist())
         datos_del = df_m[df_m["nombre"] == m_del].iloc[0]
-        st.warning(f"¿Confirma retirar a **{m_del}** (DNI: {datos_del['id_miembro']}) del sistema?")
+        
+        # Comprobar si tiene registros en diezmos
+        df_tiene_dz = core.read_db("SELECT COUNT(*) AS cant FROM public.diezmos WHERE id_miembro = ?", (datos_del["id_miembro"],))
+        cant_dz = int(df_tiene_dz.iloc[0]["cant"]) if not df_tiene_dz.empty else 0
+
+        if cant_dz > 0:
+            st.warning(f"⚠️ **Atención**: Este miembro tiene **{cant_dz} aportes de diezmo** registrados. Si lo eliminas, los aportes históricos conservarán su nombre pero quedarán desvinculados del padrón activo.")
+        else:
+            st.warning(f"¿Confirma retirar a **{m_del}** (DNI: {datos_del['id_miembro']}) del sistema?")
+
         if st.button("Eliminar Definitivamente", type="primary"):
-            foto_del = str(datos_del.get("foto", ""))
-            if foto_del and not foto_del.startswith("http") and os.path.exists(foto_del):
-                try: os.remove(foto_del)
-                except Exception: pass
-            
-            core.query_db("DELETE FROM miembros WHERE id_miembro=?", (datos_del["id_miembro"],))
-            core.registrar_log("Miembros", "Eliminación", f"Retirado {m_del}")
-            st.toast("🗑️ Miembro eliminado.")
+            core.query_db("DELETE FROM public.miembros WHERE id_miembro = ?", (datos_del["id_miembro"],))
+            core.registrar_log("Miembros", "Eliminación", f"Retirado miembro {m_del} (DNI: {datos_del['id_miembro']})")
+            st.toast("🗑️ Miembro eliminado del padrón.")
             st.rerun()
