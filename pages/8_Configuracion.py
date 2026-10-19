@@ -13,9 +13,19 @@ st.set_page_config(
     layout="wide"
 )
 
-# 1. Autenticación y estilos base
-core.requerir_login()
+# 1. Seguridad: Verificar que el usuario tenga acceso al módulo de Configuración
+core.verificar_acceso_pagina("Configuración")
 core.aplicar_estilos_base()
+
+# Catálogo oficial de páginas completas del sistema
+MODULOS_SISTEMA = [
+    "Panel Principal",
+    "Miembros",
+    "Diezmos",
+    "Tesorería",
+    "Actividades",
+    "Configuración"
+]
 
 # 2. Estructura de tablas y permisos en PostgreSQL
 try:
@@ -57,10 +67,10 @@ try:
                     nombre TEXT NOT NULL,
                     rol TEXT NOT NULL,
                     activo BOOLEAN DEFAULT TRUE,
-                    permisos TEXT DEFAULT '🏛️ Parámetros y Catálogos,🔒 Cierres de Mes y Auditoría',
+                    permisos TEXT DEFAULT 'Panel Principal,Diezmos,Tesorería',
                     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
-                ALTER TABLE public.usuarios_sistema ADD COLUMN IF NOT EXISTS permisos TEXT DEFAULT '🏛️ Parámetros y Catálogos,🔒 Cierres de Mes y Auditoría';
+                ALTER TABLE public.usuarios_sistema ADD COLUMN IF NOT EXISTS permisos TEXT DEFAULT 'Panel Principal,Diezmos,Tesorería';
                 INSERT INTO public.fondos_catalogo (nombre) VALUES ('General') ON CONFLICT (nombre) DO NOTHING;
             """)
         conn.commit()
@@ -114,36 +124,26 @@ def generar_backup_completo_excel():
 
 st.subheader("⚙️ Configuración y Administración del Sistema")
 
-# Identificar usuario y permisos activos
-usuario_sesion = st.session_state.get("usuario_actual", {}).get("usuario", "")
 rol_actual = st.session_state.get("usuario_actual", {}).get("rol", "")
 es_administrador = (rol_actual == "Administrador")
 
-PESTANAS_MODULOS_GENERALES = [
-    "🏛️ Parámetros y Catálogos",
-    "🔒 Cierres de Mes y Auditoría"
-]
-PESTANAS_EXCLUSIVAS_ADMIN = [
-    "🛡️ Respaldo y Base de Datos",
-    "👥 Usuarios y Permisos"
-]
-
+# Respaldo y Usuarios solo visibles para el Administrador
 if es_administrador:
-    secciones_visibles = PESTANAS_MODULOS_GENERALES + PESTANAS_EXCLUSIVAS_ADMIN
+    secciones_configuracion = [
+        "🏛️ Parámetros y Catálogos",
+        "🔒 Cierres de Mes y Auditoría",
+        "🛡️ Respaldo y Base de Datos",
+        "👥 Usuarios y Permisos"
+    ]
 else:
-    df_perm_actual = core.read_db("SELECT permisos FROM public.usuarios_sistema WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(?))", (usuario_sesion,))
-    permisos_str = df_perm_actual.iloc[0]["permisos"] if not df_perm_actual.empty and df_perm_actual.iloc[0]["permisos"] else ""
-    permisos_lista = [p.strip() for p in permisos_str.split(",") if p.strip()]
-    secciones_visibles = [sec for sec in PESTANAS_MODULOS_GENERALES if sec in permisos_lista]
+    secciones_configuracion = [
+        "🏛️ Parámetros y Catálogos",
+        "🔒 Cierres de Mes y Auditoría"
+    ]
 
-if not secciones_visibles:
-    st.warning("⚠️ No tienes permisos asignados para visualizar secciones en este módulo. Consulta con el Administrador General.")
-    st.stop()
-
-# Selector horizontal de puntos
 seccion_cfg = st.radio(
     "Sección de Configuración:",
-    secciones_visibles,
+    secciones_configuracion,
     horizontal=True
 )
 
@@ -497,7 +497,7 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
             )
 
 # ==============================================================================
-# 3. RESPALDO Y BASE DE DATOS (EXCLUSIVO ADMINISTRADOR)
+# 3. RESPALDO Y BASE DE DATOS (SOLO ADMINISTRADOR)
 # ==============================================================================
 elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
     c_b1, c_b2 = st.columns(2)
@@ -574,49 +574,52 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
                     st.error(f"Error durante el reinicio: {e}")
 
 # ==============================================================================
-# 4. USUARIOS Y PERMISOS (EXCLUSIVO ADMINISTRADOR)
+# 4. GESTIÓN DE USUARIOS Y ASIGNACIÓN DE MÓDULOS (SOLO ADMINISTRADOR)
 # ==============================================================================
 elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
-    st.markdown("#### 👥 Administración de Usuarios y Asignación de Pestañas")
-    st.caption("Control exclusivo para creación de cuentas y configuración de pestañas autorizadas.")
+    st.markdown("#### 👥 Administración de Usuarios y Asignación de Módulos")
+    st.caption("Marca con exactitud a qué módulos de la aplicación tendrá acceso cada cuenta. Las páginas no seleccionadas no se verán en su menú lateral.")
 
-    with st.expander("➕ Registrar Nuevo Usuario", expanded=False):
-        with st.form("form_nuevo_usuario"):
+    with st.expander("➕ Registrar Nuevo Usuario y Asignar Módulos", expanded=False):
+        with st.form("form_nuevo_usuario_modulos"):
             col1, col2 = st.columns(2)
             with col1:
-                nuevo_u = st.text_input("Usuario (ej: tesoreria, pastor):", placeholder="Sin espacios ni mayúsculas").strip().lower()
+                nuevo_u = st.text_input("Usuario (ej: tesoreria, secretaria):", placeholder="Sin espacios ni mayúsculas").strip().lower()
                 nuevo_nom = st.text_input("Nombre Completo (ej: Juan Pérez):")
             with col2:
-                nuevo_rol = st.selectbox("Rol en el Sistema:", ["Tesorero General", "Pastor Principal", "Secretaría", "Administrador"])
+                nuevo_rol = st.selectbox("Rol del Usuario:", ["Tesorero General", "Pastor Principal", "Secretaría", "Administrador"])
                 nuevo_pass = st.text_input("Contraseña Temporal:", type="password")
 
-            st.markdown("##### 🔑 Pestañas autorizadas en Configuración:")
-            st.caption("Indica a cuáles de estas pestañas podrá ingresar este usuario:")
-            pestanas_autorizadas = st.multiselect(
-                "Selecciona las secciones permitidas:",
-                options=PESTANAS_MODULOS_GENERALES,
-                default=PESTANAS_MODULOS_GENERALES
+            st.markdown("---")
+            st.markdown("##### 📌 Módulos (Páginas) autorizadas para este usuario:")
+            modulos_autorizados = st.multiselect(
+                "Selecciona los módulos a los que tendrá acceso:",
+                options=MODULOS_SISTEMA,
+                default=["Panel Principal", "Diezmos", "Tesorería"]
             )
-            st.info("🔒 **Seguridad del Sistema**: Las secciones '🛡️ Respaldo y Base de Datos' y '👥 Usuarios y Permisos' están reservadas y bloqueadas permanentemente para todos los usuarios que no sean Administrador.")
+            
+            st.info("🔒 **Seguridad estricta**: Si seleccionas 'Configuración', el usuario NO tendrá acceso a las pestañas de 'Respaldo' ni de 'Usuarios'. Esas secciones están reservadas única y exclusivamente para el Administrador.")
 
-            btn_guardar_u = st.form_submit_button("Guardar Usuario con Permisos", type="primary")
+            btn_guardar_u = st.form_submit_button("Guardar Usuario con Módulos", type="primary")
 
             if btn_guardar_u:
                 if not nuevo_u or not nuevo_nom or not nuevo_pass:
-                    st.warning("⚠️ Debes completar todos los campos obligatorios.")
+                    st.warning("⚠️ Debes completar los campos obligatorios de usuario, nombre y contraseña.")
+                elif not modulos_autorizados:
+                    st.warning("⚠️ Debes asignar al menos un módulo permitido.")
                 else:
                     pass_hash = core.encriptar_clave(nuevo_pass)
-                    cadena_permisos = ",".join(pestanas_autorizadas)
+                    cadena_permisos = ",".join(modulos_autorizados)
                     try:
                         core.query_db("""
                             INSERT INTO public.usuarios_sistema (usuario, password_hash, nombre, rol, activo, permisos)
                             VALUES (%s, %s, %s, %s, TRUE, %s)
                         """, (nuevo_u, pass_hash, nuevo_nom, nuevo_rol, cadena_permisos))
-                        core.registrar_log("Usuarios", "Crear", f"Usuario '{nuevo_u}' registrado con rol '{nuevo_rol}' y permisos: {cadena_permisos}.")
-                        st.success(f"✅ Usuario '{nuevo_u}' registrado exitosamente.")
+                        core.registrar_log("Usuarios", "Crear", f"Usuario '{nuevo_u}' registrado con módulos: {cadena_permisos}")
+                        st.success(f"✅ Usuario '{nuevo_u}' registrado exitosamente con sus módulos permitidos.")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error al registrar usuario (verifique si el usuario ya existe): {e}")
+                        st.error(f"Error al registrar usuario: {e}")
 
     st.markdown("##### Cuentas Registradas en el Sistema")
     try:
@@ -626,65 +629,66 @@ elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
             st.dataframe(
                 df_usuarios.rename(columns={
                     "id": "ID", "usuario": "Usuario", "nombre": "Nombre",
-                    "rol": "Rol", "activo": "Estado Activo", "permisos": "Pestañas Autorizadas", "fecha_creacion": "Fecha Creación"
+                    "rol": "Rol", "activo": "Estado Activo", "permisos": "Módulos Autorizados", "fecha_creacion": "Fecha Creación"
                 }), 
                 use_container_width=True, 
                 hide_index=True
             )
 
             st.markdown("---")
-            st.markdown("##### ⚙️ Modificar Permisos y Clave de Usuario Existente")
-            
-            usuarios_modificables = {
+            st.markdown("##### ⚙️ Modificar Módulos Permitidos y Contraseña")
+
+            usuarios_dict = {
                 f"{r['usuario']} ({r['nombre']} - {r['rol']})": r["id"] 
                 for _, r in df_usuarios.iterrows()
             }
             
-            u_sel_label = st.selectbox("Seleccione cuenta a modificar:", list(usuarios_modificables.keys()))
-            id_u_sel = usuarios_modificables[u_sel_label]
+            u_sel_label = st.selectbox("Seleccione la cuenta a configurar:", list(usuarios_dict.keys()))
+            id_u_sel = usuarios_dict[u_sel_label]
             row_user = df_usuarios[df_usuarios["id"] == id_u_sel].iloc[0]
 
-            c_u1, c_u2 = st.columns(2)
-            with c_u1:
-                with st.form("form_cambiar_permisos_pass"):
-                    st.caption(f"Configuración para: **{row_user['usuario']}** ({row_user['nombre']})")
-                    
-                    perms_actuales = [p.strip() for p in str(row_user.get("permisos", "")).split(",") if p.strip()]
-                    defaults_sel = [p for p in perms_actuales if p in PESTANAS_MODULOS_GENERALES]
+            perms_raw = str(row_user.get("permisos", "") or "")
+            perms_lista = [p.strip() for p in perms_raw.split(",") if p.strip()]
 
-                    nuevos_perms = st.multiselect(
-                        "Pestañas de Configuración permitidas:",
-                        options=PESTANAS_MODULOS_GENERALES,
-                        default=defaults_sel
-                    )
-                    
-                    st.markdown("---")
-                    nueva_clave = st.text_input("Nueva Contraseña (dejar en blanco si no se desea cambiar):", type="password")
+            with st.form("form_editar_permisos_modulos"):
+                st.caption(f"Configurando acceso para: **{row_user['usuario']}** ({row_user['nombre']})")
 
-                    if st.form_submit_button("💾 Actualizar Permisos y Contraseña"):
-                        cad_nuevos_p = ",".join(nuevos_perms)
-                        if nueva_clave.strip():
-                            n_hash = core.encriptar_clave(nueva_clave)
-                            core.query_db("UPDATE public.usuarios_sistema SET password_hash=%s, permisos=%s WHERE id=%s", (n_hash, cad_nuevos_p, id_u_sel))
-                            core.registrar_log("Usuarios", "Seguridad", f"Actualizada contraseña y permisos de {row_user['usuario']}: {cad_nuevos_p}")
-                            st.success("✅ Permisos y contraseña actualizados correctamente.")
-                        else:
-                            core.query_db("UPDATE public.usuarios_sistema SET permisos=%s WHERE id=%s", (cad_nuevos_p, id_u_sel))
-                            core.registrar_log("Usuarios", "Seguridad", f"Actualizados permisos de {row_user['usuario']}: {cad_nuevos_p}")
-                            st.success("✅ Permisos actualizados correctamente.")
-                        st.rerun()
+                def_modulos = [m for m in MODULOS_SISTEMA if m in perms_lista] if "TODOS" not in perms_raw.upper() else MODULOS_SISTEMA
+                nuevos_modulos = st.multiselect(
+                    "Módulos a los que puede acceder en la barra lateral:",
+                    options=MODULOS_SISTEMA,
+                    default=def_modulos
+                )
 
-            with c_u2:
+                st.markdown("---")
+                nueva_clave = st.text_input("Nueva Contraseña (dejar en blanco para no modificar):", type="password")
+
+                if st.form_submit_button("💾 Guardar Cambios de Módulos y Clave", type="primary"):
+                    cadena_nueva = ",".join(nuevos_modulos) if nuevos_modulos else "NINGUNO"
+
+                    if nueva_clave.strip():
+                        n_hash = core.encriptar_clave(nueva_clave)
+                        core.query_db("UPDATE public.usuarios_sistema SET password_hash=%s, permisos=%s WHERE id=%s", (n_hash, cadena_nueva, id_u_sel))
+                        core.registrar_log("Usuarios", "Seguridad", f"Actualizada clave y módulos de {row_user['usuario']}: {cadena_nueva}")
+                        st.success("✅ Módulos y contraseña actualizados exitosamente.")
+                    else:
+                        core.query_db("UPDATE public.usuarios_sistema SET permisos=%s WHERE id=%s", (cadena_nueva, id_u_sel))
+                        core.registrar_log("Usuarios", "Seguridad", f"Actualizados módulos de {row_user['usuario']}: {cadena_nueva}")
+                        st.success("✅ Módulos autorizados actualizados exitosamente.")
+                    st.rerun()
+
+            col_est1, col_est2 = st.columns(2)
+            with col_est1:
                 st.caption(f"Estado de la cuenta: **{'Activo' if row_user['activo'] else 'Inactivo'}**")
                 if row_user["usuario"] == "admin":
-                    st.info("ℹ️ La cuenta de Administrador General 'admin' posee acceso total y no puede ser modificada en su estado ni eliminada.")
+                    st.info("ℹ️ La cuenta 'admin' cuenta con acceso irrestricto y no puede ser desactivada ni eliminada.")
                 else:
                     nuevo_estado = not bool(row_user["activo"])
-                    btn_txt = "🔴 Desactivar Acceso" if row_user["activo"] else "🟢 Habilitar Acceso"
+                    btn_txt = "🔴 Desactivar Cuenta" if row_user["activo"] else "🟢 Habilitar Cuenta"
                     if st.button(btn_txt):
                         core.query_db("UPDATE public.usuarios_sistema SET activo=%s WHERE id=%s", (nuevo_estado, id_u_sel))
-                        core.registrar_log("Usuarios", "Estado", f"Cambiado estado de {row_user['usuario']} a {nuevo_estado}")
-                        st.toast("✅ Estado de cuenta actualizado.")
+                        core.registrar_log("Usuarios", "Estado", f"Estado de {row_user['usuario']} cambiado a {nuevo_estado}")
+                        st.toast("✅ Estado actualizado.")
                         st.rerun()
 
                     if st.button("🗑️ Eliminar Usuario Definitivamente", type="secondary"):
