@@ -11,12 +11,16 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 from reportlab.graphics.shapes import Drawing, Rect, String, Line
 
+# 1. Configuración de página (primera orden de Streamlit)
 st.set_page_config(
     page_title="Tesorería y Movimientos", 
     page_icon="🏛️", 
     layout="wide"
 )
+
+# 2. Seguridad y validación de permisos
 core.requerir_login()
+core.verificar_acceso_pagina("Tesorería")
 core.aplicar_estilos_base()
 
 st.subheader("🏛️ Libro de Tesorería y Movimientos")
@@ -31,7 +35,7 @@ opcion = st.radio(
 st.markdown("---")
 
 # Catálogos base
-df_fondos = core.read_db("SELECT nombre FROM public.fondos_catalogo")
+df_fondos = core.read_db("SELECT nombre FROM public.fondos_catalogo ORDER BY id ASC")
 fondos = df_fondos["nombre"].tolist() if not df_fondos.empty else ["General"]
 
 # ==============================================================================
@@ -96,7 +100,6 @@ def generar_pdf_libro_caja_dinamico(df_reporte, cols_visibles, tot_i, tot_e, sal
     ]))
     elem.extend([t_resumen, Spacer(1, 12)])
 
-    # Cálculo dinámico de ancho de columnas para ocupar el ancho total imprimible (742 pt)
     pesos_cols = [MAP_COLUMNAS_INFO[c][1] for c in cols_visibles]
     suma_pesos = sum(pesos_cols) if pesos_cols else 1
     col_widths = [int((p / suma_pesos) * 742) for p in pesos_cols]
@@ -115,7 +118,6 @@ def generar_pdf_libro_caja_dinamico(df_reporte, cols_visibles, tot_i, tot_e, sal
                 fila_item.append(str(val)[:30])
         filas.append(fila_item)
 
-    # Fila final de totalización si la columna Monto está visible
     if "Monto (S/.)" in cols_visibles:
         idx_monto = cols_visibles.index("Monto (S/.)")
         fila_total = ["" for _ in cols_visibles]
@@ -251,7 +253,6 @@ def generar_pdf_cuadros_graficos(anio_sel, medio_sel, fig1, fig2, fig3, fig4, y1
     elem = []
     c_prim = colors.HexColor("#1E3A8A")
 
-    # Encabezado institucional
     t_head = Table([[
         Paragraph(
             "<b>IGLESIA EVANGÉLICA \"NAZARETH\" — ASAMBLEAS DE DIOS DEL PERÚ</b><br/>"
@@ -272,7 +273,6 @@ def generar_pdf_cuadros_graficos(anio_sel, medio_sel, fig1, fig2, fig3, fig4, y1
     ]))
     elem.extend([t_head, Spacer(1, 8)])
 
-    # Tarjetas de resumen
     t_kpis = Table([
         ["TOTAL INGRESOS", "TOTAL EGRESOS", "TOTAL DIEZMOS", "SALDO REMANENTE ACUMULADO"],
         [f"S/. {tot_i:,.2f}", f"S/. {tot_e:,.2f}", f"S/. {tot_dz:,.2f}", f"S/. {sal_acum:,.2f}"]
@@ -292,12 +292,10 @@ def generar_pdf_cuadros_graficos(anio_sel, medio_sel, fig1, fig2, fig3, fig4, y1
     ]))
     elem.extend([t_kpis, Spacer(1, 10)])
 
-    # Página 1: Gráficos 1 y 2
     g1_item = render_chart_para_pdf(fig1, f"1. EVOLUCIÓN MENSUAL DE INGRESOS ({anio_sel})", core.MESES, y1, "#10B981", calcular_tendencia_lineal(y1))
     g2_item = render_chart_para_pdf(fig2, f"2. EVOLUCIÓN MENSUAL DE EGRESOS Y GASTOS ({anio_sel})", core.MESES, y2, "#EF4444", calcular_tendencia_lineal(y2))
     elem.extend([g1_item, Spacer(1, 8), g2_item, PageBreak()])
 
-    # Página 2: Gráficos 3 y 4 + Firmas
     g3_item = render_chart_para_pdf(fig3, f"3. EVOLUCIÓN HISTÓRICA DE DIEZMOS ({anio_sel})", core.MESES, y3, "#6366F1", calcular_tendencia_lineal(y3))
     g4_item = render_chart_para_pdf(fig4, f"4. SALDOS NETOS REMANENTES POR MES ({anio_sel})", core.MESES, y4, "#1E3A8A", calcular_tendencia_lineal(y4))
     
@@ -352,7 +350,7 @@ if opcion == "Libro Detallado":
             with f7:
                 filtro_txt = st.text_input("Búsqueda Rápida:", placeholder="Buscar por detalle, comprobante o responsable...")
 
-        # SELECTOR FLOTANTE DE COLUMNAS A MOSTRAR Y DESCARGAR
+        # SELECTOR FLOTANTE DE COLUMNAS VISIBLES
         with st.expander("👁️ Selector Flotante de Columnas Visibles (Agregar / Quitar según tu selección)", expanded=True):
             todas_las_columnas = list(MAP_COLUMNAS_INFO.keys())
             cols_seleccionadas = st.multiselect(
@@ -365,7 +363,6 @@ if opcion == "Libro Detallado":
             st.warning("⚠️ Debes seleccionar al menos una columna para mostrar la tabla.")
             cols_seleccionadas = ["Fecha", "Tipo", "Monto (S/.)"]
 
-        # Aplicar filtros de datos
         df_fil = df_mov.copy()
         filtros_activos = []
 
@@ -402,7 +399,6 @@ if opcion == "Libro Detallado":
 
         txt_filtros_resumen = ", ".join(filtros_activos) if filtros_activos else "Todos los registros"
 
-        # Totales numéricos exactos
         tot_ing = float(df_fil[df_fil["tipo"] == "Ingreso"]["monto"].sum()) if not df_fil.empty else 0.0
         tot_egr = float(df_fil[df_fil["tipo"] == "Egreso"]["monto"].sum()) if not df_fil.empty else 0.0
         saldo_neto = tot_ing - tot_egr
@@ -413,7 +409,6 @@ if opcion == "Libro Detallado":
         m3.metric("Saldo Neto", f"S/. {saldo_neto:,.2f}")
         m4.metric("Movimientos Listados", f"{len(df_fil)} reg.")
 
-        # BOTONES DE DESCARGA ADAPTADOS A LA VISTA FILTRADA
         col_pdf, col_xls, col_info = st.columns([2.5, 2.5, 4])
         with col_pdf:
             if not df_fil.empty:
@@ -441,7 +436,6 @@ if opcion == "Libro Detallado":
 
         st.markdown("---")
 
-        # Tabla en pantalla según las columnas seleccionadas
         cols_db_mostrar = [MAP_COLUMNAS_INFO[c][0] for c in cols_seleccionadas]
         renombrar_dict = {MAP_COLUMNAS_INFO[c][0]: c for c in cols_seleccionadas}
         df_mostrar = df_fil[cols_db_mostrar].rename(columns=renombrar_dict)
@@ -457,10 +451,15 @@ if opcion == "Libro Detallado":
         )
 
 # ==============================================================================
-# 2. EVOLUCIÓN Y 4 CUADROS GRÁFICOS CON DESCARGA EN PDF
+# 2. EVOLUCIÓN Y GRÁFICOS (EXCLUYENDO ASIENTOS DE APERTURA)
 # ==============================================================================
 elif opcion == "Evolución y Gráficos":
-    df_mov = core.read_db("SELECT fecha, tipo, monto, medio FROM public.movimientos WHERE comprobante NOT IN ('ASIENTO-APERTURA') AND fecha IS NOT NULL")
+    # Exclusión de asientos de apertura para reflejar solo ingresos y gastos operativos
+    df_mov = core.read_db("""
+        SELECT fecha, tipo, monto, medio 
+        FROM public.movimientos 
+        WHERE comprobante NOT LIKE 'ASIENTO-APERTURA%' AND fecha IS NOT NULL
+    """)
     
     if df_mov.empty:
         st.info("No hay suficientes registros para proyectar gráficas estadísticas.")
@@ -498,7 +497,7 @@ elif opcion == "Evolución y Gráficos":
         y_saldos = pivot_m["Saldo"].values
 
         # ----------------------------------------------------------------------
-        # CUADRO 1: SOLO INGRESOS
+        # CUADRO 1: INGRESOS OPERATIVOS
         # ----------------------------------------------------------------------
         fig_ing = go.Figure()
         fig_ing.add_trace(go.Bar(
@@ -511,14 +510,14 @@ elif opcion == "Evolución y Gráficos":
         ))
         agregar_tendencia_plotly(fig_ing, core.MESES, y_ingresos, "Proyección / Tendencia Ingresos")
         fig_ing.update_layout(
-            title=f"1. Ingresos Mensuales ({anio_graf}) — {filtro_medio_graf}",
+            title=f"1. Ingresos Operativos Mensuales ({anio_graf}) — {filtro_medio_graf}",
             xaxis_title="Mes", yaxis_title="Monto (S/.)", height=370,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig_ing, use_container_width=True)
 
         # ----------------------------------------------------------------------
-        # CUADRO 2: SOLO EGRESOS
+        # CUADRO 2: EGRESOS Y GASTOS
         # ----------------------------------------------------------------------
         fig_egr = go.Figure()
         fig_egr.add_trace(go.Bar(
@@ -538,7 +537,7 @@ elif opcion == "Evolución y Gráficos":
         st.plotly_chart(fig_egr, use_container_width=True)
 
         # ----------------------------------------------------------------------
-        # CUADRO 3: EVOLUCIÓN DE DIEZMOS
+        # CUADRO 3: EVOLUCIÓN HISTÓRICA DE DIEZMOS
         # ----------------------------------------------------------------------
         df_dz_bd = core.read_db("SELECT fecha, monto FROM public.diezmos WHERE fecha IS NOT NULL")
         if not df_dz_bd.empty:
@@ -569,7 +568,7 @@ elif opcion == "Evolución y Gráficos":
         st.plotly_chart(fig_dz, use_container_width=True)
 
         # ----------------------------------------------------------------------
-        # CUADRO 4: SALDOS QUE QUEDAN POR MES
+        # CUADRO 4: SALDOS NETOS REMANENTES POR MES
         # ----------------------------------------------------------------------
         colores_sal = ["#1E3A8A" if s >= 0 else "#DC2626" for s in y_saldos]
         fig_sal = go.Figure()
@@ -583,13 +582,13 @@ elif opcion == "Evolución y Gráficos":
         ))
         agregar_tendencia_plotly(fig_sal, core.MESES, y_saldos, "Tendencia de Superávit")
         fig_sal.update_layout(
-            title=f"4. Saldos Netos por Periodo ({anio_graf})",
+            title=f"4. Saldos Operativos Netos por Periodo ({anio_graf})",
             xaxis_title="Mes", yaxis_title="Monto (S/.)", height=370,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig_sal, use_container_width=True)
 
-        # BOTÓN DE DESCARGA DEL PDF DE TODOS LOS GRÁFICOS
+        # DESCARGA DE REPORTE GRÁFICO EN PDF
         st.markdown("---")
         tot_i_graf = float(np.sum(y_ingresos))
         tot_e_graf = float(np.sum(y_egresos))
@@ -629,7 +628,7 @@ elif opcion == "Registrar Movimiento":
     else:
         dict_c = {"General": ["General"]}
 
-    df_r = core.read_db("SELECT nombre FROM public.responsables_catalogo")
+    df_r = core.read_db("SELECT nombre FROM public.responsables_catalogo ORDER BY nombre ASC")
     resps = df_r["nombre"].tolist() if not df_r.empty else ["Tesorero"]
 
     anio, mes, num_m, f_sug = core.selector_periodo("mov_reg")
@@ -650,7 +649,8 @@ elif opcion == "Registrar Movimiento":
 
         if st.form_submit_button("💾 Guardar Transacción", type="primary"):
             core.query_db("""
-                INSERT INTO public.movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
+                INSERT INTO public.movimientos 
+                (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'Cobrado')
             """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp.strip(), det.strip(), resp))
             core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp.strip()})")
@@ -706,7 +706,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
         else:
             def label_mov(r):
                 c_str = f" | Comp: {r['comprobante']}" if r.get('comprobante') else ""
-                return f"ID #{r['id']} [{r['fecha']}] {r['tipo']} — S/. {r['monto']:,.2f} ({r['detalle'][:30]}){c_str}"
+                return f"ID #{r['id']} [{r['fecha']}] {r['tipo']} — S/. {float(r['monto']):,.2f} ({r['detalle'][:30]}){c_str}"
 
             opciones_mov_dict = {label_mov(r): r["id"] for _, r in df_filtrado_mov.iterrows()}
             st.markdown("---")
@@ -725,7 +725,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                 idx_fnd = fondos.index(reg_mov["fondo"]) if reg_mov["fondo"] in fondos else 0
                 idx_med = core.MEDIOS.index(reg_mov["medio"]) if reg_mov["medio"] in core.MEDIOS else 0
 
-                df_r_act = core.read_db("SELECT nombre FROM public.responsables_catalogo")
+                df_r_act = core.read_db("SELECT nombre FROM public.responsables_catalogo ORDER BY nombre ASC")
                 resps_act = df_r_act["nombre"].tolist() if not df_r_act.empty else ["Tesorero"]
                 idx_resp = resps_act.index(reg_mov["responsable"]) if reg_mov["responsable"] in resps_act else 0
 
@@ -761,9 +761,9 @@ elif opcion == "⚙️ Modificar o Eliminar":
                     st.rerun()
 
             elif accion_m == "🗑️ Eliminar Transacción":
-                st.warning(f"⚠️ ¿Confirma eliminar definitivamente la transacción **ID #{reg_mov['id']}** por **S/. {reg_mov['monto']:,.2f}** ({reg_mov['detalle']})?")
+                st.warning(f"⚠️ ¿Confirma eliminar definitivamente la transacción **ID #{reg_mov['id']}** por **S/. {float(reg_mov['monto']):,.2f}** ({reg_mov['detalle']})?")
                 if st.button("Eliminar Definitivamente", type="primary"):
                     core.query_db("DELETE FROM public.movimientos WHERE id=?", (id_mov_sel,))
-                    core.registrar_log("Tesorería", "Eliminación", f"Eliminado asiento ID #{id_mov_sel} de S/. {reg_mov['monto']:,.2f}")
+                    core.registrar_log("Tesorería", "Eliminación", f"Eliminado asiento ID #{id_mov_sel} de S/. {float(reg_mov['monto']):,.2f}")
                     st.toast("🗑️ Transacción eliminada de Tesorería.")
                     st.rerun()
