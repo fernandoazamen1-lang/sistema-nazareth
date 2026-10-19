@@ -3,6 +3,7 @@ import core
 import os
 import io
 import zipfile
+import calendar
 import pandas as pd
 from datetime import date
 
@@ -12,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 1. Autenticación y estilos base limpios
+# 1. Autenticación y estilos base
 core.requerir_login()
 core.aplicar_estilos_base()
 
@@ -64,7 +65,6 @@ try:
 except Exception:
     pass
 
-# Funciones de configuración clave-valor
 def get_config(clave, default=""):
     df = core.read_db("SELECT valor FROM public.config_iglesia WHERE clave=?", (clave,))
     return df.iloc[0]["valor"] if not df.empty else default
@@ -110,10 +110,9 @@ def generar_backup_completo_excel():
                 pass
     return output.getvalue()
 
-# Encabezado estándar
 st.subheader("⚙️ Configuración y Administración del Sistema")
 
-# Navegación estética y nativa por puntos (st.radio)
+# Navegación limpia mediante selector horizontal de puntos
 seccion_cfg = st.radio(
     "Sección de Configuración:",
     [
@@ -158,12 +157,11 @@ if seccion_cfg == "🏛️ Parámetros y Catálogos":
                 set_config("telefono_contacto", tel_igl)
                 set_config("lema_iglesia", lem_igl)
                 
-                # Actualizar tesorero para vouchers y reportes
                 core.query_db(
                     "INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (?, 'Config_Tesorero', 'Actualizar', ?)", 
                     (str(date.today()), tes_igl.strip())
                 )
-                core.registrar_log("Configuración", "Identidad", "Actualizados datos institucionales y de firmas.")
+                core.registrar_log("Configuración", "Identidad", "Actualizados datos institucionales y firmas.")
                 st.toast("✅ Datos institucionales guardados correctamente.")
                 st.rerun()
 
@@ -281,34 +279,98 @@ if seccion_cfg == "🏛️ Parámetros y Catálogos":
                         st.rerun()
 
 # ==============================================================================
-# 2. CIERRES DE MES Y AUDITORÍA
+# 2. CIERRES DE MES CON ASIENTOS DE APERTURA AUTOMÁTICOS EN EFECTIVO Y BANCOS
 # ==============================================================================
 elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
     col_cierre, col_aud = st.columns([1, 1])
 
     with col_cierre:
-        st.markdown("#### 🔒 Cierres Mensuales y Bloqueo de Periodos")
+        st.markdown("#### 🔒 Cierres Mensuales y Apertura de Siguiente Mes")
         anio_c, mes_c, num_m, _ = core.selector_periodo("cierre_master")
         per_str = f"{anio_c}-{num_m:02d}"
+        u_dia = calendar.monthrange(anio_c, num_m)[1]
+        f_fin_per = f"{anio_c}-{num_m:02d}-{u_dia:02d}"
 
-        df_m_per = core.read_db("SELECT tipo, monto FROM public.movimientos WHERE SUBSTRING(fecha::text FROM 1 FOR 7) = ?", (per_str,))
-        ing_p = float(df_m_per[df_m_per["tipo"] == "Ingreso"]["monto"].sum()) if not df_m_per.empty else 0.0
-        egr_p = float(df_m_per[df_m_per["tipo"] == "Egreso"]["monto"].sum()) if not df_m_per.empty else 0.0
-        sal_p = ing_p - egr_p
+        # Periodo siguiente y códigos de comprobante de apertura
+        if num_m == 12:
+            anio_sig = anio_c + 1
+            num_m_sig = 1
+        else:
+            anio_sig = anio_c
+            num_m_sig = num_m + 1
+
+        sig_per = f"{anio_sig}-{num_m_sig:02d}"
+        fecha_apertura_sig = f"{anio_sig}-{num_m_sig:02d}-01"
+        nombre_mes_sig = core.MESES[num_m_sig - 1]
+        c_efe_sig = f"ASIENTO-APERTURA-EFE-{sig_per}"
+        c_ban_sig = f"ASIENTO-APERTURA-BAN-{sig_per}"
+
+        # 1. Movimientos del mes seleccionado
+        df_m_per = core.read_db("""
+            SELECT tipo, monto, medio, comprobante 
+            FROM public.movimientos 
+            WHERE SUBSTRING(fecha::text FROM 1 FOR 7) = ?
+        """, (per_str,))
+
+        c_efe_propio = f"ASIENTO-APERTURA-EFE-{per_str}"
+        c_ban_propio = f"ASIENTO-APERTURA-BAN-{per_str}"
+        tiene_apertura_propia = not df_m_per.empty and df_m_per["comprobante"].isin([c_efe_propio, c_ban_propio]).any()
+
+        if tiene_apertura_propia:
+            ing_efe = float(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["monto"].sum())
+            egr_efe = float(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Egreso")]["monto"].sum())
+            sal_efe = ing_efe - egr_efe
+
+            ing_ban = float(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["monto"].sum())
+            egr_ban = float(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Egreso")]["monto"].sum())
+            sal_ban = ing_ban - egr_ban
+        else:
+            df_hist = core.read_db("""
+                SELECT tipo, monto, medio 
+                FROM public.movimientos 
+                WHERE fecha <= ? AND comprobante NOT LIKE 'ASIENTO-APERTURA%'
+            """, (f_fin_per,))
+
+            ing_efe = float(df_hist[(df_hist["medio"] == "Efectivo") & (df_hist["tipo"] == "Ingreso")]["monto"].sum()) if not df_hist.empty else 0.0
+            egr_efe = float(df_hist[(df_hist["medio"] == "Efectivo") & (df_hist["tipo"] == "Egreso")]["monto"].sum()) if not df_hist.empty else 0.0
+            sal_efe = ing_efe - egr_efe
+
+            ing_ban = float(df_hist[(df_hist["medio"] != "Efectivo") & (df_hist["tipo"] == "Ingreso")]["monto"].sum()) if not df_hist.empty else 0.0
+            egr_ban = float(df_hist[(df_hist["medio"] != "Efectivo") & (df_hist["tipo"] == "Egreso")]["monto"].sum()) if not df_hist.empty else 0.0
+            sal_ban = ing_ban - egr_ban
+
+        sal_total = sal_efe + sal_ban
+
+        # Ingresos y egresos operativos del mes (excluyendo aperturas previas)
+        df_op_mes = df_m_per[~df_m_per["comprobante"].astype(str).str.startswith("ASIENTO-APERTURA")] if not df_m_per.empty else pd.DataFrame()
+        ing_op = float(df_op_mes[df_op_mes["tipo"] == "Ingreso"]["monto"].sum()) if not df_op_mes.empty else 0.0
+        egr_op = float(df_op_mes[df_op_mes["tipo"] == "Egreso"]["monto"].sum()) if not df_op_mes.empty else 0.0
 
         cierre_act = core.read_db("SELECT * FROM public.cierres_mensuales WHERE periodo=?", (per_str,))
         esta_cerrado = not cierre_act.empty and cierre_act.iloc[0]["estado"] == "Cerrado"
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Ingresos", f"S/. {ing_p:,.2f}")
-        m2.metric("Egresos", f"S/. {egr_p:,.2f}")
-        m3.metric("Saldo Neto", f"S/. {sal_p:,.2f}", delta="Superávit" if sal_p >= 0 else "Déficit")
+        m1, m2 = st.columns(2)
+        m1.metric("Ingresos Operativos", f"S/. {ing_op:,.2f}")
+        m2.metric("Egresos del Mes", f"S/. {egr_op:,.2f}")
+
+        st.markdown("##### 💰 Arqueo de Saldos al Cierre (a trasladar al mes siguiente):")
+        c_s1, c_s2, c_s3 = st.columns(3)
+        c_s1.metric("💵 Saldo en Efectivo", f"S/. {sal_efe:,.2f}")
+        c_s2.metric("🏦 Saldo en Bancos", f"S/. {sal_ban:,.2f}")
+        c_s3.metric("🪙 Saldo Neto Total", f"S/. {sal_total:,.2f}", delta="Superávit" if sal_total >= 0 else "Déficit")
+
+        st.markdown("---")
 
         if not esta_cerrado:
             st.info(f"Estado del Periodo: **🔓 ABIERTO** ({mes_c} {anio_c})")
-            st.caption("Al cerrar el periodo se bloquean automáticamente registros, modificaciones y eliminaciones de movimientos y diezmos en este mes.")
-            if st.button("🔒 Ejecutar Cierre y Congelar Mes", type="primary"):
+            st.caption(
+                f"Al congelar el mes, se crearán automáticamente los **2 Asientos de Apertura** "
+                f"(Efectivo: S/. {sal_efe:,.2f} y Bancos: S/. {sal_ban:,.2f}) el primer día de **{nombre_mes_sig} {anio_sig}**."
+            )
+            if st.button("🔒 Ejecutar Cierre y Crear Asientos de Apertura", type="primary", use_container_width=True):
                 user_ejecutor = st.session_state.get("usuario_actual", {}).get("nombre", "Tesorería General")
+
+                # 1. Registrar cierre mensual
                 core.query_db("""
                     INSERT INTO public.cierres_mensuales (periodo, fecha_cierre, estado, saldo_cierre, usuario) 
                     VALUES (?, ?, 'Cerrado', ?, ?) 
@@ -317,21 +379,67 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
                         estado = 'Cerrado', 
                         saldo_cierre = EXCLUDED.saldo_cierre, 
                         usuario = EXCLUDED.usuario
-                """, (per_str, str(date.today()), sal_p, user_ejecutor))
-                core.registrar_log("Cierres", "Bloqueo", f"Cierre mensual {per_str} por S/. {sal_p:,.2f}")
-                st.toast("✅ Mes cerrado y congelado formalmente.")
+                """, (per_str, str(date.today()), sal_total, user_ejecutor))
+
+                # 2. Limpiar asientos previos del mes siguiente para evitar duplicidades
+                core.query_db("DELETE FROM public.movimientos WHERE comprobante IN (?, ?)", (c_efe_sig, c_ban_sig))
+
+                # 3. Asiento de Apertura en Efectivo (Día 1 del siguiente mes)
+                tipo_efe = 'Ingreso' if sal_efe >= 0 else 'Egreso'
+                core.query_db("""
+                    INSERT INTO public.movimientos (
+                        fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito
+                    ) VALUES (
+                        ?, ?, 'Saldo Inicial / Apertura', 'Apertura en Efectivo', 'General', ?, 'Efectivo', ?, ?, ?, '', 'Cobrado'
+                    )
+                """, (
+                    fecha_apertura_sig,
+                    tipo_efe,
+                    round(abs(float(sal_efe)), 2),
+                    c_efe_sig,
+                    f"Saldo inicial de apertura mes {nombre_mes_sig} {anio_sig} (Remanente Efectivo {mes_c} {anio_c})",
+                    user_ejecutor
+                ))
+
+                # 4. Asiento de Apertura en Bancos (Día 1 del siguiente mes)
+                tipo_ban = 'Ingreso' if sal_ban >= 0 else 'Egreso'
+                core.query_db("""
+                    INSERT INTO public.movimientos (
+                        fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito
+                    ) VALUES (
+                        ?, ?, 'Saldo Inicial / Apertura', 'Apertura en Banco / Transferencia', 'General', ?, 'Depósito / Transferencia', ?, ?, ?, '', 'Cobrado'
+                    )
+                """, (
+                    fecha_apertura_sig,
+                    tipo_ban,
+                    round(abs(float(sal_ban)), 2),
+                    c_ban_sig,
+                    f"Saldo inicial de apertura mes {nombre_mes_sig} {anio_sig} (Remanente Banco {mes_c} {anio_c})",
+                    user_ejecutor
+                ))
+
+                core.registrar_log(
+                    "Cierres", "Bloqueo", 
+                    f"Cierre {per_str}. Aperturas creadas para {sig_per}: Efectivo S/. {sal_efe:,.2f}, Bancos S/. {sal_ban:,.2f}"
+                )
+                st.success(f"🎉 Periodo {per_str} cerrado. Se generaron los 2 asientos de apertura para el 01/{num_m_sig:02d}/{anio_sig}.")
                 st.rerun()
         else:
             f_c = cierre_act.iloc[0].get("fecha_cierre", str(date.today()))
             u_c = cierre_act.iloc[0].get("usuario", "Tesorería")
             st.success(f"Estado del Periodo: **🔒 CERRADO** el {f_c} por {u_c}")
+            st.info(f"Asientos de apertura vigentes en Tesorería para **{fecha_apertura_sig}**:\n- 💵 Efectivo: `{c_efe_sig}`\n- 🏦 Bancos: `{c_ban_sig}`")
+
             with st.expander("🔓 Reapertura Extraordinaria del Periodo"):
+                st.warning("⚠️ Al reabrir este periodo, los asientos de apertura generados en el mes siguiente se eliminarán temporalmente para evitar inconsistencias.")
                 mot = st.text_input("Motivo fundamentado para reabrir el mes:")
-                if st.button("Confirmar Reapertura", type="secondary"):
+                if st.button("Confirmar Reapertura y Eliminar Aperturas Siguientes", type="secondary"):
                     if mot.strip():
+                        # Eliminar asientos de apertura generados en el mes siguiente
+                        core.query_db("DELETE FROM public.movimientos WHERE comprobante IN (?, ?)", (c_efe_sig, c_ban_sig))
                         core.query_db("UPDATE public.cierres_mensuales SET estado='Abierto' WHERE periodo=?", (per_str,))
-                        core.registrar_log("Cierres", "Reapertura", f"Reabierto {per_str}: {mot.strip()}")
-                        st.toast("🔓 Periodo reabierto.")
+                        core.registrar_log("Cierres", "Reapertura", f"Reabierto {per_str}: {mot.strip()} (Eliminados {c_efe_sig} y {c_ban_sig})")
+                        st.toast("🔓 Periodo reabierto y asientos de apertura revertidos.")
                         st.rerun()
                     else:
                         st.error("Debe ingresar obligatoriamente un motivo para reabrir.")
