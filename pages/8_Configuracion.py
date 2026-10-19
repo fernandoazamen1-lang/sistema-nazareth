@@ -17,7 +17,7 @@ st.set_page_config(
 core.requerir_login()
 core.aplicar_estilos_base()
 
-# 2. Asegurar estructura de tablas en esquema public (PostgreSQL)
+# 2. Estructura de tablas y permisos en PostgreSQL
 try:
     with core.get_db() as conn:
         with conn.cursor() as cur:
@@ -57,8 +57,10 @@ try:
                     nombre TEXT NOT NULL,
                     rol TEXT NOT NULL,
                     activo BOOLEAN DEFAULT TRUE,
+                    permisos TEXT DEFAULT '🏛️ Parámetros y Catálogos,🔒 Cierres de Mes y Auditoría',
                     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                ALTER TABLE public.usuarios_sistema ADD COLUMN IF NOT EXISTS permisos TEXT DEFAULT '🏛️ Parámetros y Catálogos,🔒 Cierres de Mes y Auditoría';
                 INSERT INTO public.fondos_catalogo (nombre) VALUES ('General') ON CONFLICT (nombre) DO NOTHING;
             """)
         conn.commit()
@@ -112,15 +114,36 @@ def generar_backup_completo_excel():
 
 st.subheader("⚙️ Configuración y Administración del Sistema")
 
-# Navegación mediante selector horizontal
+# Identificar usuario y permisos activos
+usuario_sesion = st.session_state.get("usuario_actual", {}).get("usuario", "")
+rol_actual = st.session_state.get("usuario_actual", {}).get("rol", "")
+es_administrador = (rol_actual == "Administrador")
+
+PESTANAS_MODULOS_GENERALES = [
+    "🏛️ Parámetros y Catálogos",
+    "🔒 Cierres de Mes y Auditoría"
+]
+PESTANAS_EXCLUSIVAS_ADMIN = [
+    "🛡️ Respaldo y Base de Datos",
+    "👥 Usuarios y Permisos"
+]
+
+if es_administrador:
+    secciones_visibles = PESTANAS_MODULOS_GENERALES + PESTANAS_EXCLUSIVAS_ADMIN
+else:
+    df_perm_actual = core.read_db("SELECT permisos FROM public.usuarios_sistema WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(?))", (usuario_sesion,))
+    permisos_str = df_perm_actual.iloc[0]["permisos"] if not df_perm_actual.empty and df_perm_actual.iloc[0]["permisos"] else ""
+    permisos_lista = [p.strip() for p in permisos_str.split(",") if p.strip()]
+    secciones_visibles = [sec for sec in PESTANAS_MODULOS_GENERALES if sec in permisos_lista]
+
+if not secciones_visibles:
+    st.warning("⚠️ No tienes permisos asignados para visualizar secciones en este módulo. Consulta con el Administrador General.")
+    st.stop()
+
+# Selector horizontal de puntos
 seccion_cfg = st.radio(
     "Sección de Configuración:",
-    [
-        "🏛️ Parámetros y Catálogos",
-        "🔒 Cierres de Mes y Auditoría",
-        "🛡️ Respaldo y Base de Datos",
-        "👥 Usuarios y Permisos"
-    ],
+    secciones_visibles,
     horizontal=True
 )
 
@@ -323,7 +346,6 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
             egr_ban = float(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Egreso")]["monto"].sum())
             sal_ban = ing_ban - egr_ban
         else:
-            # Corrección del parámetro de comodín para evitar conflicto con % en psycopg2
             df_hist = core.read_db("""
                 SELECT tipo, monto, medio 
                 FROM public.movimientos 
@@ -368,7 +390,6 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
             if st.button("🔒 Ejecutar Cierre y Crear Asientos de Apertura", type="primary", use_container_width=True):
                 user_ejecutor = st.session_state.get("usuario_actual", {}).get("nombre", "Tesorería General")
 
-                # Registrar cierre
                 core.query_db("""
                     INSERT INTO public.cierres_mensuales (periodo, fecha_cierre, estado, saldo_cierre, usuario) 
                     VALUES (?, ?, 'Cerrado', ?, ?) 
@@ -379,10 +400,8 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
                         usuario = EXCLUDED.usuario
                 """, (per_str, str(date.today()), sal_total, user_ejecutor))
 
-                # Limpiar asientos previos del periodo siguiente
                 core.query_db("DELETE FROM public.movimientos WHERE comprobante IN (?, ?)", (c_efe_sig, c_ban_sig))
 
-                # Asiento apertura en Efectivo
                 tipo_efe = 'Ingreso' if sal_efe >= 0 else 'Egreso'
                 core.query_db("""
                     INSERT INTO public.movimientos (
@@ -399,7 +418,6 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
                     user_ejecutor
                 ))
 
-                # Asiento apertura en Bancos
                 tipo_ban = 'Ingreso' if sal_ban >= 0 else 'Egreso'
                 core.query_db("""
                     INSERT INTO public.movimientos (
@@ -479,9 +497,9 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
             )
 
 # ==============================================================================
-# 3. RESPALDO Y BASE DE DATOS
+# 3. RESPALDO Y BASE DE DATOS (EXCLUSIVO ADMINISTRADOR)
 # ==============================================================================
-elif seccion_cfg == "🛡️ Respaldo y Base de Datos":
+elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
     c_b1, c_b2 = st.columns(2)
 
     with c_b1:
@@ -556,104 +574,124 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos":
                     st.error(f"Error durante el reinicio: {e}")
 
 # ==============================================================================
-# 4. USUARIOS Y PERMISOS
+# 4. USUARIOS Y PERMISOS (EXCLUSIVO ADMINISTRADOR)
 # ==============================================================================
-elif seccion_cfg == "👥 Usuarios y Permisos":
-    rol_actual = st.session_state.get("usuario_actual", {}).get("rol", "")
+elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
+    st.markdown("#### 👥 Administración de Usuarios y Asignación de Pestañas")
+    st.caption("Control exclusivo para creación de cuentas y configuración de pestañas autorizadas.")
 
-    if rol_actual == "Administrador":
-        st.markdown("#### 👥 Administración de Usuarios y Accesos")
-        st.caption("Gestión exclusiva de credenciales y roles para el personal del sistema.")
+    with st.expander("➕ Registrar Nuevo Usuario", expanded=False):
+        with st.form("form_nuevo_usuario"):
+            col1, col2 = st.columns(2)
+            with col1:
+                nuevo_u = st.text_input("Usuario (ej: tesoreria, pastor):", placeholder="Sin espacios ni mayúsculas").strip().lower()
+                nuevo_nom = st.text_input("Nombre Completo (ej: Juan Pérez):")
+            with col2:
+                nuevo_rol = st.selectbox("Rol en el Sistema:", ["Tesorero General", "Pastor Principal", "Secretaría", "Administrador"])
+                nuevo_pass = st.text_input("Contraseña Temporal:", type="password")
 
-        with st.expander("➕ Registrar Nuevo Usuario", expanded=False):
-            with st.form("form_nuevo_usuario"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    nuevo_u = st.text_input("Usuario (ej: tesoreria, pastor):", placeholder="Sin espacios ni mayúsculas").strip().lower()
-                    nuevo_nom = st.text_input("Nombre Completo (ej: Juan Pérez):")
-                with col2:
-                    nuevo_rol = st.selectbox("Rol en el Sistema:", ["Tesorero General", "Pastor Principal", "Secretaría", "Administrador"])
-                    nuevo_pass = st.text_input("Contraseña Temporal:", type="password")
+            st.markdown("##### 🔑 Pestañas autorizadas en Configuración:")
+            st.caption("Indica a cuáles de estas pestañas podrá ingresar este usuario:")
+            pestanas_autorizadas = st.multiselect(
+                "Selecciona las secciones permitidas:",
+                options=PESTANAS_MODULOS_GENERALES,
+                default=PESTANAS_MODULOS_GENERALES
+            )
+            st.info("🔒 **Seguridad del Sistema**: Las secciones '🛡️ Respaldo y Base de Datos' y '👥 Usuarios y Permisos' están reservadas y bloqueadas permanentemente para todos los usuarios que no sean Administrador.")
 
-                btn_guardar_u = st.form_submit_button("Guardar Usuario", type="primary")
+            btn_guardar_u = st.form_submit_button("Guardar Usuario con Permisos", type="primary")
 
-                if btn_guardar_u:
-                    if not nuevo_u or not nuevo_nom or not nuevo_pass:
-                        st.warning("⚠️ Debes completar todos los campos.")
-                    else:
-                        pass_hash = core.encriptar_clave(nuevo_pass)
-                        try:
-                            core.query_db("""
-                                INSERT INTO public.usuarios_sistema (usuario, password_hash, nombre, rol, activo)
-                                VALUES (%s, %s, %s, %s, TRUE)
-                            """, (nuevo_u, pass_hash, nuevo_nom, nuevo_rol))
-                            core.registrar_log("Usuarios", "Crear", f"Usuario '{nuevo_u}' registrado con rol '{nuevo_rol}'.")
-                            st.success(f"✅ Usuario '{nuevo_u}' registrado exitosamente.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al registrar usuario (verifique si el usuario ya existe): {e}")
+            if btn_guardar_u:
+                if not nuevo_u or not nuevo_nom or not nuevo_pass:
+                    st.warning("⚠️ Debes completar todos los campos obligatorios.")
+                else:
+                    pass_hash = core.encriptar_clave(nuevo_pass)
+                    cadena_permisos = ",".join(pestanas_autorizadas)
+                    try:
+                        core.query_db("""
+                            INSERT INTO public.usuarios_sistema (usuario, password_hash, nombre, rol, activo, permisos)
+                            VALUES (%s, %s, %s, %s, TRUE, %s)
+                        """, (nuevo_u, pass_hash, nuevo_nom, nuevo_rol, cadena_permisos))
+                        core.registrar_log("Usuarios", "Crear", f"Usuario '{nuevo_u}' registrado con rol '{nuevo_rol}' y permisos: {cadena_permisos}.")
+                        st.success(f"✅ Usuario '{nuevo_u}' registrado exitosamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al registrar usuario (verifique si el usuario ya existe): {e}")
 
-        st.markdown("##### Cuentas Registradas en el Sistema")
-        try:
-            df_usuarios = core.read_db("SELECT id, usuario, nombre, rol, activo, fecha_creacion FROM public.usuarios_sistema ORDER BY id ASC")
+    st.markdown("##### Cuentas Registradas en el Sistema")
+    try:
+        df_usuarios = core.read_db("SELECT id, usuario, nombre, rol, activo, permisos, fecha_creacion FROM public.usuarios_sistema ORDER BY id ASC")
 
-            if not df_usuarios.empty:
-                st.dataframe(
-                    df_usuarios.rename(columns={
-                        "id": "ID", "usuario": "Usuario", "nombre": "Nombre",
-                        "rol": "Rol", "activo": "Estado Activo", "fecha_creacion": "Fecha Creación"
-                    }), 
-                    use_container_width=True, 
-                    hide_index=True
-                )
+        if not df_usuarios.empty:
+            st.dataframe(
+                df_usuarios.rename(columns={
+                    "id": "ID", "usuario": "Usuario", "nombre": "Nombre",
+                    "rol": "Rol", "activo": "Estado Activo", "permisos": "Pestañas Autorizadas", "fecha_creacion": "Fecha Creación"
+                }), 
+                use_container_width=True, 
+                hide_index=True
+            )
 
-                st.markdown("---")
-                st.markdown("##### ⚙️ Gestionar Credenciales de Usuario Existente")
-                
-                usuarios_modificables = {
-                    f"{r['usuario']} ({r['nombre']} - {r['rol']})": r["id"] 
-                    for _, r in df_usuarios.iterrows()
-                }
-                
-                u_sel_label = st.selectbox("Seleccione cuenta a modificar:", list(usuarios_modificables.keys()))
-                id_u_sel = usuarios_modificables[u_sel_label]
-                row_user = df_usuarios[df_usuarios["id"] == id_u_sel].iloc[0]
+            st.markdown("---")
+            st.markdown("##### ⚙️ Modificar Permisos y Clave de Usuario Existente")
+            
+            usuarios_modificables = {
+                f"{r['usuario']} ({r['nombre']} - {r['rol']})": r["id"] 
+                for _, r in df_usuarios.iterrows()
+            }
+            
+            u_sel_label = st.selectbox("Seleccione cuenta a modificar:", list(usuarios_modificables.keys()))
+            id_u_sel = usuarios_modificables[u_sel_label]
+            row_user = df_usuarios[df_usuarios["id"] == id_u_sel].iloc[0]
 
-                c_u1, c_u2 = st.columns(2)
-                with c_u1:
-                    with st.form("form_cambiar_pass"):
-                        st.caption(f"Actualizar clave para: **{row_user['usuario']}**")
-                        nueva_clave = st.text_input("Nueva Contraseña:", type="password")
-                        if st.form_submit_button("🔑 Actualizar Contraseña"):
-                            if nueva_clave.strip():
-                                n_hash = core.encriptar_clave(nueva_clave)
-                                core.query_db("UPDATE public.usuarios_sistema SET password_hash=%s WHERE id=%s", (n_hash, id_u_sel))
-                                core.registrar_log("Usuarios", "Seguridad", f"Actualizada contraseña del usuario {row_user['usuario']}")
-                                st.success("✅ Contraseña actualizada.")
-                            else:
-                                st.warning("La contraseña no puede estar vacía.")
+            c_u1, c_u2 = st.columns(2)
+            with c_u1:
+                with st.form("form_cambiar_permisos_pass"):
+                    st.caption(f"Configuración para: **{row_user['usuario']}** ({row_user['nombre']})")
+                    
+                    perms_actuales = [p.strip() for p in str(row_user.get("permisos", "")).split(",") if p.strip()]
+                    defaults_sel = [p for p in perms_actuales if p in PESTANAS_MODULOS_GENERALES]
 
-                with c_u2:
-                    st.caption(f"Estado de la cuenta: **{'Activo' if row_user['activo'] else 'Inactivo'}**")
-                    if row_user["usuario"] == "admin":
-                        st.info("ℹ️ La cuenta de Administrador General 'admin' no puede desactivarse ni eliminarse.")
-                    else:
-                        nuevo_estado = not bool(row_user["activo"])
-                        btn_txt = "🔴 Desactivar Acceso" if row_user["activo"] else "🟢 Habilitar Acceso"
-                        if st.button(btn_txt):
-                            core.query_db("UPDATE public.usuarios_sistema SET activo=%s WHERE id=%s", (nuevo_estado, id_u_sel))
-                            core.registrar_log("Usuarios", "Estado", f"Cambiado estado de {row_user['usuario']} a {nuevo_estado}")
-                            st.toast("✅ Estado de cuenta actualizado.")
-                            st.rerun()
+                    nuevos_perms = st.multiselect(
+                        "Pestañas de Configuración permitidas:",
+                        options=PESTANAS_MODULOS_GENERALES,
+                        default=defaults_sel
+                    )
+                    
+                    st.markdown("---")
+                    nueva_clave = st.text_input("Nueva Contraseña (dejar en blanco si no se desea cambiar):", type="password")
 
-                        if st.button("🗑️ Eliminar Usuario Definitivamente", type="secondary"):
-                            core.query_db("DELETE FROM public.usuarios_sistema WHERE id=%s", (id_u_sel,))
-                            core.registrar_log("Usuarios", "Eliminación", f"Eliminado usuario {row_user['usuario']}")
-                            st.toast("🗑️ Usuario eliminado.")
-                            st.rerun()
+                    if st.form_submit_button("💾 Actualizar Permisos y Contraseña"):
+                        cad_nuevos_p = ",".join(nuevos_perms)
+                        if nueva_clave.strip():
+                            n_hash = core.encriptar_clave(nueva_clave)
+                            core.query_db("UPDATE public.usuarios_sistema SET password_hash=%s, permisos=%s WHERE id=%s", (n_hash, cad_nuevos_p, id_u_sel))
+                            core.registrar_log("Usuarios", "Seguridad", f"Actualizada contraseña y permisos de {row_user['usuario']}: {cad_nuevos_p}")
+                            st.success("✅ Permisos y contraseña actualizados correctamente.")
+                        else:
+                            core.query_db("UPDATE public.usuarios_sistema SET permisos=%s WHERE id=%s", (cad_nuevos_p, id_u_sel))
+                            core.registrar_log("Usuarios", "Seguridad", f"Actualizados permisos de {row_user['usuario']}: {cad_nuevos_p}")
+                            st.success("✅ Permisos actualizados correctamente.")
+                        st.rerun()
 
-        except Exception as e:
-            st.error(f"Error al gestionar usuarios: {e}")
+            with c_u2:
+                st.caption(f"Estado de la cuenta: **{'Activo' if row_user['activo'] else 'Inactivo'}**")
+                if row_user["usuario"] == "admin":
+                    st.info("ℹ️ La cuenta de Administrador General 'admin' posee acceso total y no puede ser modificada en su estado ni eliminada.")
+                else:
+                    nuevo_estado = not bool(row_user["activo"])
+                    btn_txt = "🔴 Desactivar Acceso" if row_user["activo"] else "🟢 Habilitar Acceso"
+                    if st.button(btn_txt):
+                        core.query_db("UPDATE public.usuarios_sistema SET activo=%s WHERE id=%s", (nuevo_estado, id_u_sel))
+                        core.registrar_log("Usuarios", "Estado", f"Cambiado estado de {row_user['usuario']} a {nuevo_estado}")
+                        st.toast("✅ Estado de cuenta actualizado.")
+                        st.rerun()
 
-    else:
-        st.info("ℹ️ **Acceso Restringido**: La creación y administración de usuarios está reservada exclusivamente para el Administrador General.")
+                    if st.button("🗑️ Eliminar Usuario Definitivamente", type="secondary"):
+                        core.query_db("DELETE FROM public.usuarios_sistema WHERE id=%s", (id_u_sel,))
+                        core.registrar_log("Usuarios", "Eliminación", f"Eliminado usuario {row_user['usuario']}")
+                        st.toast("🗑️ Usuario eliminado.")
+                        st.rerun()
+
+    except Exception as e:
+        st.error(f"Error al gestionar usuarios: {e}")
