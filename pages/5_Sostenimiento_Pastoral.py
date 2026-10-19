@@ -8,15 +8,24 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 
-st.set_page_config(page_title="Sostenimiento Pastoral", page_icon="✝️", layout="wide")
+# 1. Configuración de página
+st.set_page_config(
+    page_title="Sostenimiento Pastoral", 
+    page_icon="✝️", 
+    layout="wide"
+)
+
+# 2. Seguridad y verificación de permisos
+core.requerir_login()
+core.verificar_acceso_pagina("Sostenimiento Pastoral")
 core.aplicar_estilos_base()
 
-# 1. Base de datos: asegurar tabla con columnas previsionales (Sintaxis PostgreSQL)
+# 3. Base de datos: asegurar tabla con columnas previsionales en esquema public
 try:
     with core.get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS sostenimiento_pastoral (
+                CREATE TABLE IF NOT EXISTS public.sostenimiento_pastoral (
                     id SERIAL PRIMARY KEY,
                     codigo TEXT,
                     fecha TEXT,
@@ -32,55 +41,40 @@ try:
                     descuento_pension REAL DEFAULT 0.0,
                     essalud_aporte REAL DEFAULT 0.0,
                     monto_neto REAL DEFAULT 0.0
-                )
+                );
+                ALTER TABLE public.sostenimiento_pastoral ADD COLUMN IF NOT EXISTS regimen_pension TEXT DEFAULT 'Sin Descuento';
+                ALTER TABLE public.sostenimiento_pastoral ADD COLUMN IF NOT EXISTS descuento_pension REAL DEFAULT 0.0;
+                ALTER TABLE public.sostenimiento_pastoral ADD COLUMN IF NOT EXISTS essalud_aporte REAL DEFAULT 0.0;
+                ALTER TABLE public.sostenimiento_pastoral ADD COLUMN IF NOT EXISTS monto_neto REAL DEFAULT 0.0;
             """)
-            
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='sostenimiento_pastoral'")
-            cols_existentes = {row['column_name'] for row in cur.fetchall()}
-
-            columnas_def = [
-                ("regimen_pension", "TEXT DEFAULT 'Sin Descuento'"), 
-                ("descuento_pension", "REAL DEFAULT 0.0"), 
-                ("essalud_aporte", "REAL DEFAULT 0.0"), 
-                ("monto_neto", "REAL DEFAULT 0.0")
-            ]
-            
-            for col, tipo in columnas_def:
-                if col not in cols_existentes:
-                    try:
-                        cur.execute(f"SAVEPOINT sp_{col}")
-                        cur.execute(f"ALTER TABLE sostenimiento_pastoral ADD COLUMN {col} {tipo}")
-                        cur.execute(f"RELEASE SAVEPOINT sp_{col}")
-                    except Exception:
-                        cur.execute(f"ROLLBACK TO SAVEPOINT sp_{col}")
         conn.commit()
-except Exception as e:
+except Exception:
     pass
 
-# 2. Funciones de configuración persistente
+# Funciones de configuración persistente
 def _get_config(modulo, por_defecto=""):
-    df = core.read_db("SELECT descripcion FROM auditoria WHERE modulo=? ORDER BY id DESC LIMIT 1", (modulo,))
+    df = core.read_db("SELECT descripcion FROM public.auditoria WHERE modulo=? ORDER BY id DESC LIMIT 1", (modulo,))
     return df.iloc[0]["descripcion"] if not df.empty else por_defecto
 
 def _set_config(modulo, nuevo_val, actual_val):
     if nuevo_val.strip() and nuevo_val.strip() != actual_val:
-        core.query_db("INSERT INTO auditoria (fecha_hora, modulo, accion, descripcion) VALUES (?, ?, 'Actualizar', ?)",
+        core.query_db("INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (?, ?, 'Actualizar', ?)",
                       (str(date.today()), modulo, nuevo_val.strip()))
 
 pastor_p_def = _get_config('Config_PastorPrincipal', "Pr. Titular")
 dni_p_def = _get_config('Config_PastorPrincipal_DNI', "")
 tesorero_def = _get_config('Config_Tesorero', "Tesorero General")
 
-# 3. Lógica correlativa y contable
+# Lógica correlativa y contable
 def get_sig_codigo(prefijo):
-    df_u = core.read_db("SELECT codigo FROM sostenimiento_pastoral WHERE codigo LIKE ? ORDER BY id DESC LIMIT 1", (f"{prefijo} - %",))
+    df_u = core.read_db("SELECT codigo FROM public.sostenimiento_pastoral WHERE codigo LIKE ? ORDER BY id DESC LIMIT 1", (f"{prefijo} - %",))
     if df_u.empty:
         return f"{prefijo} - 00001"
     try:
         num = int(df_u.iloc[0]["codigo"].split("-")[-1].strip())
         return f"{prefijo} - {num + 1:05d}"
     except Exception:
-        df_cant = core.read_db("SELECT COUNT(*) as t FROM sostenimiento_pastoral WHERE codigo LIKE ?", (f"{prefijo} - %",))
+        df_cant = core.read_db("SELECT COUNT(*) as t FROM public.sostenimiento_pastoral WHERE codigo LIKE ?", (f"{prefijo} - %",))
         cant = df_cant.iloc[0]["t"] if not df_cant.empty else 0
         return f"{prefijo} - {int(cant) + 1:05d}"
 
@@ -89,16 +83,16 @@ def _sincronizar_asiento_tesoreria(fecha, tipo_beneficiario, monto_neto, medio, 
     det_caja = f"Sostenimiento {motivo} - {pastor} (Neto Percibido)" if tipo_beneficiario == "Principal" else f"Ofrenda {motivo} - {pastor}"
     if es_update:
         core.query_db("""
-            UPDATE movimientos SET fecha = ?, monto = ?, medio = ?, responsable = ?, detalle = ?
+            UPDATE public.movimientos SET fecha = ?, monto = ?, medio = ?, responsable = ?, detalle = ?
             WHERE comprobante = ?
         """, (str(fecha), monto_neto, medio, tesorero, det_caja, codigo))
     else:
         core.query_db("""
-            INSERT INTO movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
+            INSERT INTO public.movimientos (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
             VALUES (?, 'Egreso', 'Sostenimiento Pastoral', ?, 'General', ?, ?, ?, ?, ?, '', 'Cobrado')
         """, (str(fecha), subcat, monto_neto, medio, codigo, det_caja, tesorero))
 
-# 4. Generador de Acta PDF Profesional y Equilibrada
+# Generador de Acta PDF Profesional
 def generar_acta_pastoral_pdf(codigo, fecha, pastor, dni, tipo, mes_actividad, bruto, desc_pension, essalud, neto, medio, motivo, tesorero, regimen):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=40, rightMargin=40, topMargin=36, bottomMargin=36)
@@ -175,7 +169,7 @@ def generar_acta_pastoral_pdf(codigo, fecha, pastor, dni, tipo, mes_actividad, b
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#1E3A8A")),
             ('TEXTCOLOR', (0,0), (-1,0), colors.white),
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('ALIGN', (2,0), (2,-1), 'CENTER'),
+            ('ALIGN', (2,0), (-1,-1), 'CENTER'),
             ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#FFEE00")),
             ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
             ('PADDING', (0,0), (-1,-1), 6)
@@ -235,18 +229,25 @@ def generar_acta_pastoral_pdf(codigo, fecha, pastor, dni, tipo, mes_actividad, b
     doc.build(elements)
     return buf.getvalue()
 
-# 5. Interfaz Principal
-st.subheader("✝️ Gestión Integral de Sostenimiento y Ofrendas Ministeriales")
-tabs = st.tabs([
-    "✍️ Registrar Sostenimiento u Ofrenda",
-    "📋 Consultas y Reportes Consolidados",
-    "⚙️ Gestión de Comprobantes (Editar / Eliminar)"
-])
+# Interfaz Principal
+st.subheader("✝️ Gestión de Sostenimiento y Ofrendas Ministeriales")
+
+opcion = st.radio(
+    "Sección:", 
+    [
+        "✍️ Registrar Sostenimiento u Ofrenda",
+        "📋 Consultas y Reportes Consolidados",
+        "⚙️ Gestión de Comprobantes (Editar / Eliminar)"
+    ], 
+    horizontal=True
+)
+
+st.markdown("---")
 
 # ==============================================================================
-# PESTAÑA 1: REGISTRO CON CÁLCULO PREVISIONAL Y ESSALUD
+# 1. REGISTRAR SOSTENIMIENTO U OFRENDA
 # ==============================================================================
-with tabs[0]:
+if opcion == "✍️ Registrar Sostenimiento u Ofrenda":
     st.markdown("#### ✍️ Emisión de Sostenimiento y Ofrendas")
     c_rad1, c_rad2 = st.columns([1, 2])
     with c_rad1:
@@ -320,7 +321,7 @@ with tabs[0]:
             _set_config('Config_Tesorero', tesorero_resp, tesorero_def)
 
             core.query_db("""
-                INSERT INTO sostenimiento_pastoral 
+                INSERT INTO public.sostenimiento_pastoral 
                 (codigo, fecha, tipo_beneficiario, pastor_nombre, pastor_dni, mes, monto, medio, motivo_evento, tesorero, regimen_pension, descuento_pension, essalud_aporte, monto_neto)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (codigo_asignado, str(f_emision), tipo_db, pastor_nombre.strip(), pastor_dni.strip(), periodo_concepto, monto_bruto, medio_pago, motivo_desc.strip(), tesorero_resp.strip(), regimen_sel, desc_pension, essalud_aporte, neto_final))
@@ -346,11 +347,11 @@ with tabs[0]:
         st.download_button(f"📄 Descargar Acta Oficial en PDF ({uc['codigo']})", pdf_bytes, f"Acta_Sostenimiento_{uc['codigo'].replace(' ','')}_{uc['pastor']}.pdf", "application/pdf")
 
 # ==============================================================================
-# PESTAÑA 2: CONSULTAS Y REPORTES
+# 2. CONSULTAS Y REPORTES
 # ==============================================================================
-with tabs[1]:
+elif opcion == "📋 Consultas y Reportes Consolidados":
     st.markdown("#### 📋 Consultas Consolidadas y Reporte Mensual")
-    df_base = core.read_db("SELECT * FROM sostenimiento_pastoral ORDER BY CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE) DESC, id DESC")
+    df_base = core.read_db("SELECT * FROM public.sostenimiento_pastoral ORDER BY CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE) DESC, id DESC")
 
     anio_actual = date.today().year
     anios_rango = set(range(anio_actual - 4, anio_actual + 5))
@@ -379,9 +380,9 @@ with tabs[1]:
         elif filtro_vista == "Solo Pastores Invitados / Eventuales":
             df_filtrado = df_filtrado[df_filtrado["tipo_beneficiario"] == "Eventual"]
 
-        tot_neto = df_filtrado["monto_neto"].sum() if "monto_neto" in df_filtrado.columns and not df_filtrado.empty else df_filtrado["monto"].sum()
-        tot_desc = df_filtrado["descuento_pension"].sum() if "descuento_pension" in df_filtrado.columns and not df_filtrado.empty else 0.0
-        tot_essalud = df_filtrado["essalud_aporte"].sum() if "essalud_aporte" in df_filtrado.columns and not df_filtrado.empty else 0.0
+        tot_neto = float(df_filtrado["monto_neto"].sum()) if "monto_neto" in df_filtrado.columns and not df_filtrado.empty else (float(df_filtrado["monto"].sum()) if not df_filtrado.empty else 0.0)
+        tot_desc = float(df_filtrado["descuento_pension"].sum()) if "descuento_pension" in df_filtrado.columns and not df_filtrado.empty else 0.0
+        tot_essalud = float(df_filtrado["essalud_aporte"].sum()) if "essalud_aporte" in df_filtrado.columns and not df_filtrado.empty else 0.0
 
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Neto Percibido", f"S/. {tot_neto:,.2f}")
@@ -446,11 +447,11 @@ with tabs[1]:
             )
 
 # ==============================================================================
-# PESTAÑA 3: GESTIÓN DE COMPROBANTES (EDITAR / ELIMINAR)
+# 3. GESTIÓN DE COMPROBANTES (EDITAR / ELIMINAR)
 # ==============================================================================
-with tabs[2]:
+elif opcion == "⚙️ Gestión de Comprobantes (Editar / Eliminar)":
     st.markdown("#### ⚙️ Gestión de Comprobantes (Editar / Eliminar)")
-    df_gestion = core.read_db("SELECT * FROM sostenimiento_pastoral ORDER BY id DESC")
+    df_gestion = core.read_db("SELECT * FROM public.sostenimiento_pastoral ORDER BY id DESC")
 
     if df_gestion.empty:
         st.info("No hay comprobantes disponibles para gestionar.")
@@ -502,7 +503,7 @@ with tabs[2]:
 
             if btn_actualizar:
                 core.query_db("""
-                    UPDATE sostenimiento_pastoral SET
+                    UPDATE public.sostenimiento_pastoral SET
                         fecha = ?, pastor_nombre = ?, pastor_dni = ?, mes = ?,
                         monto = ?, medio = ?, motivo_evento = ?, tesorero = ?,
                         regimen_pension = ?, descuento_pension = ?, essalud_aporte = ?, monto_neto = ?
@@ -524,8 +525,8 @@ with tabs[2]:
         elif accion == "🗑️ Eliminar Comprobante":
             st.warning(f"⚠️ Al eliminar **{reg['codigo']}**, se eliminará también su asiento en Tesorería.")
             if st.button("Eliminar Comprobante Definitivamente", type="primary"):
-                core.query_db("DELETE FROM sostenimiento_pastoral WHERE id=?", (id_gestion,))
-                core.query_db("DELETE FROM movimientos WHERE comprobante=?", (reg["codigo"],))
+                core.query_db("DELETE FROM public.sostenimiento_pastoral WHERE id=?", (id_gestion,))
+                core.query_db("DELETE FROM public.movimientos WHERE comprobante=?", (reg["codigo"],))
                 core.registrar_log("Pastoral", "Eliminación", f"Eliminado comprobante {reg['codigo']}")
                 if "ultimo_comprobante" in st.session_state:
                     del st.session_state["ultimo_comprobante"]
