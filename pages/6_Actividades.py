@@ -1,3 +1,4 @@
+core.verificar_acceso_pagina("Actividades")
 import streamlit as st
 import core
 from datetime import date
