@@ -1,3 +1,4 @@
+core.verificar_acceso_pagina("Sostenimiento Pastoral")
 import streamlit as st
 import core
 import io
