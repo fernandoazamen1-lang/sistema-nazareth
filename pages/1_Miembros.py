@@ -1,4 +1,3 @@
-core.verificar_acceso_pagina("Miembros")
 import streamlit as st
 import core
 import os
@@ -13,6 +12,7 @@ from reportlab.lib import colors
 st.set_page_config(page_title="Padrón de Miembros", page_icon="👥", layout="wide")
 core.requerir_login()
 core.inicializar_bd()
+core.verificar_acceso_pagina("Miembros")
 core.aplicar_estilos_base()
 
 # ==============================================================================
