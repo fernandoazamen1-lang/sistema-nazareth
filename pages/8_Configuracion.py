@@ -13,17 +13,20 @@ st.set_page_config(
     layout="wide"
 )
 
-# 1. Seguridad: Verificar que el usuario tenga acceso al módulo de Configuración
+# 1. Seguridad: Verificar que el usuario tenga acceso a Configuración
 core.verificar_acceso_pagina("Configuración")
 core.aplicar_estilos_base()
 
-# Catálogo oficial de páginas completas del sistema
-MODULOS_SISTEMA = [
+# LISTA COMPLETA Y EXACTA DE TODOS TUS MÓDULOS
+TODOS_LOS_MODULOS = [
     "Panel Principal",
     "Miembros",
     "Diezmos",
-    "Tesorería",
+    "Foro / Recordatorios",
+    "Pagos Programados",
+    "Sostenimiento Pastoral",
     "Actividades",
+    "Tesorería",
     "Configuración"
 ]
 
@@ -127,7 +130,7 @@ st.subheader("⚙️ Configuración y Administración del Sistema")
 rol_actual = st.session_state.get("usuario_actual", {}).get("rol", "")
 es_administrador = (rol_actual == "Administrador")
 
-# Respaldo y Usuarios solo visibles para el Administrador
+# Respaldo y Usuarios solo aparecen para el Administrador General
 if es_administrador:
     secciones_configuracion = [
         "🏛️ Parámetros y Catálogos",
@@ -594,7 +597,7 @@ elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
             st.markdown("##### 📌 Módulos (Páginas) autorizadas para este usuario:")
             modulos_autorizados = st.multiselect(
                 "Selecciona los módulos a los que tendrá acceso:",
-                options=MODULOS_SISTEMA,
+                options=TODOS_LOS_MODULOS,
                 default=["Panel Principal", "Diezmos", "Tesorería"]
             )
             
@@ -653,10 +656,10 @@ elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
             with st.form("form_editar_permisos_modulos"):
                 st.caption(f"Configurando acceso para: **{row_user['usuario']}** ({row_user['nombre']})")
 
-                def_modulos = [m for m in MODULOS_SISTEMA if m in perms_lista] if "TODOS" not in perms_raw.upper() else MODULOS_SISTEMA
+                def_modulos = [m for m in TODOS_LOS_MODULOS if m in perms_lista] if "TODOS" not in perms_raw.upper() else TODOS_LOS_MODULOS
                 nuevos_modulos = st.multiselect(
                     "Módulos a los que puede acceder en la barra lateral:",
-                    options=MODULOS_SISTEMA,
+                    options=TODOS_LOS_MODULOS,
                     default=def_modulos
                 )
 
