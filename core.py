@@ -12,24 +12,27 @@ from PIL import Image
 from supabase import create_client, Client
 
 # ==============================================================================
-# CONFIGURACIÓN GENERAL Y MAPEO DE MÓDULOS DEL SISTEMA
+# CONFIGURACIÓN GENERAL Y MAPEO EXACTO DE TODOS LOS MÓDULOS
 # ==============================================================================
 MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 MEDIOS = ["Efectivo", "Depósito / Transferencia"]
 MESES_NUM = {m: i + 1 for i, m in enumerate(MESES)}
 MESES_NOMBRES = {v: k for k, v in MESES_NUM.items()}
 
-# Palabras clave de cada página para ocultarlas de la barra lateral automáticamente
+# Mapeo de los módulos con los nombres de archivo de tu carpeta pages/
 MAPA_MODULOS_SIDEBAR = {
-    "miembros": ["miembro", "padron"],
-    "diezmos": ["diezmo"],
-    "tesorería": ["tesoreria"],
-    "actividades": ["actividad"],
-    "configuración": ["configuracion", "config"]
+    "miembros": ["1_miembros", "miembros", "padron"],
+    "diezmos": ["2_diezmos", "diezmos"],
+    "foro / recordatorios": ["3_foro_recordatorios", "foro_recordatorios", "recordatorios", "foro"],
+    "pagos programados": ["4_pagos_programados", "pagos_programados", "programados"],
+    "sostenimiento pastoral": ["5_sostenimiento_pastoral", "sostenimiento_pastoral", "sostenimiento", "pastoral"],
+    "actividades": ["6_actividades", "actividades"],
+    "tesorería": ["7_tesoreria", "tesoreria"],
+    "configuración": ["8_configuracion", "configuracion", "config"]
 }
 
 # ==============================================================================
-# SEGURIDAD, LOGIN Y VERIFICACIÓN DE PERMISOS DE MÓDULOS
+# SEGURIDAD, LOGIN Y VERIFICACIÓN DE ACCESOS
 # ==============================================================================
 def verificar_licencia():
     pass 
@@ -41,7 +44,6 @@ def validar_login(usuario: str, password_plana: str):
     u_limpio = usuario.strip().lower()
     p_hash = encriptar_clave(password_plana)
     
-    # Asegurar cuenta maestra de Administrador con acceso total permanente
     if u_limpio == "admin" and password_plana.strip() == "Nazareth2026*":
         try:
             with get_db() as conn:
@@ -131,7 +133,7 @@ def requerir_login():
             st.markdown("---")
 
 def verificar_acceso_pagina(nombre_modulo: str):
-    """Impide el acceso directo por URL si el usuario no tiene el módulo autorizado."""
+    """Impide la ejecución de la página si el usuario no tiene permiso asignado."""
     requerir_login()
     user = st.session_state.get("usuario_actual", {})
     if user.get("rol") == "Administrador":
@@ -144,12 +146,12 @@ def verificar_acceso_pagina(nombre_modulo: str):
     permisos_lista = [p.strip().lower() for p in permisos_raw.split(",") if p.strip()]
     if nombre_modulo.strip().lower() not in permisos_lista:
         st.error(f"⛔ **Acceso Restringido**: No tienes autorización para ingresar al módulo de **{nombre_modulo}**.")
-        st.info("Comunícate con el Administrador General para solicitar acceso a este módulo.")
+        st.info("Comunícate con el Administrador General para solicitar acceso.")
         st.stop()
     return True
 
 # ==============================================================================
-# CONEXIÓN CON SUPABASE STORAGE
+# CONEXIÓN DIRECTA CON SUPABASE STORAGE
 # ==============================================================================
 @st.cache_resource
 def init_supabase() -> Client:
@@ -265,20 +267,19 @@ def registrar_log(modulo, accion, descripcion):
     query_db("INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (%s, %s, %s, %s)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), modulo, accion, descripcion))
 
 # ==============================================================================
-# DISEÑO Y ESTILOS GLOBALES (OCULTAMIENTO DE MÓDULOS EN LA BARRA LATERAL)
+# DISEÑO Y ESTILOS GLOBALES (OCULTAMIENTO DE MÓDULOS DE LA BARRA LATERAL)
 # ==============================================================================
 def aplicar_estilos_base():
     verificar_licencia()
 
-    # Ocultar del menú lateral los módulos no autorizados para el usuario conectado
     css_ocultar_paginas = ""
     usuario_act = st.session_state.get("usuario_actual")
     if usuario_act and usuario_act.get("rol") != "Administrador":
         permisos_raw = usuario_act.get("permisos", "")
         if "TODOS" not in permisos_raw.upper():
             permisos_user = [p.strip().lower() for p in permisos_raw.split(",") if p.strip()]
-            
-            # Bloquear visualización de Panel Principal si no está permitido
+
+            # Ocultar página raíz / Panel Principal si no fue autorizada
             if "panel principal" not in permisos_user:
                 css_ocultar_paginas += """
                 [data-testid="stSidebarNav"] li:has(a[href="/"]),
@@ -289,8 +290,8 @@ def aplicar_estilos_base():
                     display: none !important;
                 }
                 """
-            
-            # Bloquear visualización de los demás módulos
+
+            # Ocultar módulos de pages/ que no estén en la lista de permisos
             for mod_nombre, keywords in MAPA_MODULOS_SIDEBAR.items():
                 if mod_nombre not in permisos_user:
                     for kw in keywords:
@@ -307,7 +308,6 @@ def aplicar_estilos_base():
 footer {{ visibility: hidden !important; }}
 .stDeployButton {{ display: none !important; }}
 
-/* Mantener el header activo para dar soporte al botón de menú lateral */
 header[data-testid="stHeader"] {{
     background: transparent !important;
     display: flex !important;
@@ -464,7 +464,7 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
     background: #FFFFFF !important; 
 }}
 
-/* OCULTAMIENTO DINÁMICO DE PÁGINAS NO AUTORIZADAS */
+/* REGLAS CSS PARA OCULTAR PÁGINAS NO AUTORIZADAS */
 {css_ocultar_paginas}
 </style>
 """
