@@ -50,7 +50,7 @@ def get_db():
     pool = get_db_pool()
     conn = pool.getconn()
     try:
-        # Validación de conexión activa: si estuvo inactiva y se cerró, se renueva
+        # 1. Verificar si la conexión está viva
         if conn.closed:
             pool.putconn(conn, close=True)
             conn = pool.getconn()
@@ -62,7 +62,8 @@ def get_db():
                 pool.putconn(conn, close=True)
                 conn = pool.getconn()
 
-        conn.autocommit = False
+        # 2. Mantener autocommit activo para evitar el error de transacción
+        conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("SET search_path TO public;")
         yield conn
