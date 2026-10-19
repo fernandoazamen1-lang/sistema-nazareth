@@ -2,6 +2,7 @@ import streamlit as st
 import core
 import io
 import pandas as pd
+import numpy as np
 from datetime import date, datetime
 import plotly.graph_objects as go
 from reportlab.lib.pagesizes import landscape, letter
@@ -12,30 +13,42 @@ from reportlab.lib import colors
 st.set_page_config(
     page_title="Tesorería y Movimientos", 
     page_icon="🏛️", 
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 core.requerir_login()
 core.aplicar_estilos_base()
 
-# Catálogo de fondos
+st.subheader("🏛️ Libro de Tesorería y Movimientos")
+
+# Selector principal de puntos limpios (st.radio nativo)
+opcion = st.radio(
+    "Sección:", 
+    ["Libro Detallado", "Evolución y Gráficos", "Registrar Movimiento", "⚙️ Modificar o Eliminar"], 
+    horizontal=True
+)
+
+st.markdown("---")
+
+# Catálogos base
 df_fondos = core.read_db("SELECT nombre FROM public.fondos_catalogo")
 fondos = df_fondos["nombre"].tolist() if not df_fondos.empty else ["General"]
 
 # ==============================================================================
-# GENERADORES DE REPORTES PDF Y EXCEL
+# GENERADORES DE REPORTES DINÁMICOS (PDF Y EXCEL)
 # ==============================================================================
-def generar_pdf_libro_caja(df_reporte, tot_i, tot_e, saldo_n):
+def generar_pdf_libro_caja(df_reporte, tot_i, tot_e, saldo_n, filtros_txt=""):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=25, rightMargin=25, topMargin=25, bottomMargin=25)
     elem = []
     c_prim = colors.HexColor("#1E3A8A")
     c_borde = colors.HexColor("#CBD5E1")
 
+    subt_filtro = f"<font size=8 color='#475569'>Filtros aplicados: {filtros_txt}</font>" if filtros_txt else ""
+
     t_head = Table([[
         Paragraph(
             "<b>IGLESIA EVANGÉLICA \"NAZARETH\" — ASAMBLEAS DE DIOS DEL PERÚ</b><br/>"
-            "<font size=9 color='#1E3A8A'>LIBRO OFICIAL DE CAJA Y MOVIMIENTOS DE TESORERÍA</font>",
+            f"<font size=9 color='#1E3A8A'>LIBRO OFICIAL DE CAJA Y MOVIMIENTOS DE TESORERÍA</font><br/>{subt_filtro}",
             ParagraphStyle('H1', fontName='Helvetica-Bold', fontSize=11, textColor=c_prim)
         ),
         Paragraph(
@@ -69,37 +82,37 @@ def generar_pdf_libro_caja(df_reporte, tot_i, tot_e, saldo_n):
     ]))
     elem.extend([t_resumen, Spacer(1, 12)])
 
-    filas = [["FECHA", "TIPO", "FONDO", "CATEGORÍA / RUBRO", "COMPROBANTE", "RESPONSABLE", "DETALLE", "MONTO"]]
+    filas = [["FECHA", "TIPO", "MEDIO", "FONDO", "CATEGORÍA / RUBRO", "COMPROBANTE", "DETALLE", "MONTO"]]
     for _, r in df_reporte.iterrows():
         filas.append([
             str(r.get("fecha", ""))[:10],
             str(r.get("tipo", "")),
-            str(r.get("fondo", ""))[:12],
-            f"{r.get('categoria', '')} - {r.get('subcategoria', '')}"[:26],
-            str(r.get("comprobante", ""))[:14],
-            str(r.get("responsable", ""))[:15],
-            str(r.get("detalle", ""))[:35],
+            str(r.get("medio", ""))[:14],
+            str(r.get("fondo", ""))[:10],
+            f"{r.get('categoria', '')} - {r.get('subcategoria', '')}"[:24],
+            str(r.get("comprobante", ""))[:12],
+            str(r.get("detalle", ""))[:32],
             f"S/. {float(r.get('monto', 0)):,.2f}"
         ])
 
-    filas.append(["", "", "", "", "", "", "SALDO NETO DEL PERIODO:", f"S/. {saldo_n:,.2f}"])
+    filas.append(["", "", "", "", "", "", "SALDO NETO LISTADO:", f"S/. {saldo_n:,.2f}"])
 
-    t_tabla = Table(filas, colWidths=[60, 50, 65, 130, 75, 80, 200, 80])
+    t_tabla = Table(filas, colWidths=[55, 45, 75, 55, 125, 70, 235, 80])
     t_tabla.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-2), 0.5, c_borde),
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#1E3A8A")),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 7.5),
-        ('ALIGN', (0,0), (2,-1), 'CENTER'),
-        ('ALIGN', (4,0), (4,-1), 'CENTER'),
+        ('FONTSIZE', (0,0), (-1,-1), 7.2),
+        ('ALIGN', (0,0), (3,-1), 'CENTER'),
+        ('ALIGN', (5,0), (5,-1), 'CENTER'),
         ('ALIGN', (7,1), (7,-1), 'RIGHT'),
         ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#FEF08A")),
         ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
         ('GRID', (0,-1), (-1,-1), 1, colors.HexColor("#CA8A04")),
-        ('PADDING', (0,0), (-1,-1), 3)
+        ('PADDING', (0,0), (-1,-1), 2.8)
     ]))
-    elem.extend([t_tabla, Spacer(1, 30)])
+    elem.extend([t_tabla, Spacer(1, 28)])
 
     t_firmas = Table([
         ["___________________________________", "___________________________________"],
@@ -117,233 +130,164 @@ def generar_pdf_libro_caja(df_reporte, tot_i, tot_e, saldo_n):
     doc.build(elem)
     return buf.getvalue()
 
-def generar_pdf_analisis_financiero(mes_nombre, anio_val, ing_m, egr_m, sal_m, df_fondos_m, conclusiones_txt):
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=36, rightMargin=36, topMargin=32, bottomMargin=32)
-    elem = []
-    c_prim = colors.HexColor("#1E3A8A")
-    c_borde = colors.HexColor("#CBD5E1")
-
-    t_head = Table([[
-        Paragraph(
-            f"<b>IGLESIA EVANGÉLICA NAZARETH</b><br/>"
-            f"<font size=9 color='#1E3A8A'>DICTAMEN Y ANÁLISIS FINANCIERO MENSUAL: {mes_nombre.upper()} {anio_val}</font>",
-            ParagraphStyle('H1', fontName='Helvetica-Bold', fontSize=10.5, textColor=c_prim)
-        ),
-        Paragraph(
-            f"<b>Fecha:</b> {date.today().strftime('%d/%m/%Y')}<br/>"
-            f"<font size=8>Departamento de Tesorería</font>",
-            ParagraphStyle('H2', fontName='Helvetica', fontSize=8, alignment=2)
-        )
-    ]], colWidths=[370, 170])
-    t_head.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#EFF6FF")),
-        ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#1D4ED8")),
-        ('PADDING', (0,0), (-1,-1), 6)
-    ]))
-    elem.extend([t_head, Spacer(1, 12)])
-
-    margen_ahorro = ((sal_m / ing_m) * 100) if ing_m > 0 else 0.0
-    tasa_gasto = ((egr_m / ing_m) * 100) if ing_m > 0 else 0.0
-    estado_mes = "SUPERÁVIT FINANCIERO" if sal_m >= 0 else "DÉFICIT EN EL PERIODO"
-
-    t_resumen = Table([
-        ["INDICADOR FINANCIERO", "MONTO / VALOR", "INTERPRETACIÓN CONTABLE"],
-        ["Ingresos Totales del Mes", f"S/. {ing_m:,.2f}", "Recaudación neta consolidada"],
-        ["Egresos y Gastos Operativos", f"S/. {egr_m:,.2f}", f"Representa el {tasa_gasto:.1f}% de los ingresos"],
-        ["SALDO NETO (DIFERENCIA)", f"S/. {sal_m:,.2f}", estado_mes],
-        ["Margen de Retención / Ahorro", f"{margen_ahorro:.1f}%", "Capacidad de reserva para proyectos"]
-    ], colWidths=[200, 140, 200])
-    t_resumen.setStyle(TableStyle([
-        ('GRID', (0,0), (-1,-1), 0.5, c_borde),
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#E2E8F0")),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('BACKGROUND', (0,3), (-1,3), colors.HexColor("#FEF08A") if sal_m >= 0 else colors.HexColor("#FEE2E2")),
-        ('FONTNAME', (0,3), (-1,3), 'Helvetica-Bold'),
-        ('ALIGN', (1,1), (1,-1), 'RIGHT'),
-        ('FONTSIZE', (0,0), (-1,-1), 8),
-        ('PADDING', (0,0), (-1,-1), 4.5)
-    ]))
-    elem.extend([t_resumen, Spacer(1, 14)])
-
-    elem.append(Paragraph("<b>DISTRIBUCIÓN Y RENDIMIENTO POR FONDOS:</b>", ParagraphStyle('F', fontName='Helvetica-Bold', fontSize=9, textColor=c_prim)))
-    elem.append(Spacer(1, 5))
-
-    filas_fondos = [["FONDO", "INGRESOS", "EGRESOS", "SALDO NETO"]]
-    for _, rf in df_fondos_m.iterrows():
-        filas_fondos.append([
-            str(rf["Fondo"]),
-            f"S/. {rf['Ingreso']:,.2f}",
-            f"S/. {rf['Egreso']:,.2f}",
-            f"S/. {rf['Saldo']:,.2f}"
-        ])
-    t_fnd = Table(filas_fondos, colWidths=[180, 120, 120, 120])
-    t_fnd.setStyle(TableStyle([
-        ('GRID', (0,0), (-1,-1), 0.5, c_borde),
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F8FAFC")),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('ALIGN', (1,1), (-1,-1), 'RIGHT'),
-        ('FONTSIZE', (0,0), (-1,-1), 7.5),
-        ('PADDING', (0,0), (-1,-1), 3.5)
-    ]))
-    elem.extend([t_fnd, Spacer(1, 14)])
-
-    elem.append(Paragraph("<b>CONCLUSIONES Y RECOMENDACIONES TÉCNICAS:</b>", ParagraphStyle('C', fontName='Helvetica-Bold', fontSize=9, textColor=c_prim)))
-    elem.append(Spacer(1, 4))
-    p_concl = Paragraph(conclusiones_txt.replace("\n", "<br/>"), ParagraphStyle('CTxt', fontName='Helvetica', fontSize=8, leading=11, alignment=4))
-    t_box_concl = Table([[p_concl]], colWidths=[540])
-    t_box_concl.setStyle(TableStyle([
-        ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#94A3B8")),
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
-        ('PADDING', (0,0), (-1,-1), 8)
-    ]))
-    elem.extend([t_box_concl, Spacer(1, 35)])
-
-    t_firmas = Table([
-        ["___________________________________", "___________________________________"],
-        ["TESORERÍA GENERAL", "PASTORADO PRINCIPAL"],
-        ["Iglesia Evangélica Nazareth", "Asambleas de Dios del Perú"]
-    ], colWidths=[270, 270])
-    t_firmas.setStyle(TableStyle([
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('FONTNAME', (0,1), (-1,1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 8),
-        ('PADDING', (0,0), (-1,-1), 2)
-    ]))
-    elem.append(t_firmas)
-
-    doc.build(elem)
-    return buf.getvalue()
-
 def generar_excel_tesoreria(df_exp):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_exp.to_excel(writer, index=False, sheet_name="Libro_Caja")
+        df_exp.to_excel(writer, index=False, sheet_name="Libro_Caja_Filtrado")
     return output.getvalue()
 
-# ==============================================================================
-# CABECERA Y MENÚ DE ACCIONES UNIVERSAL (PC Y CELULAR)
-# ==============================================================================
-core.banner_modulo("🏛️", "Libro de Tesorería y Movimientos", "Control de ingresos, egresos, saldos por fondo y estados financieros")
-
-LISTA_SECCIONES = [
-    "📖 Libro Detallado", 
-    "📈 Evolución y Gráficos", 
-    "➕ Registrar Movimiento", 
-    "⚙️ Modificar o Eliminar"
-]
-
-if "opcion_tesoreria" not in st.session_state:
-    st.session_state["opcion_tesoreria"] = LISTA_SECCIONES[0]
-
-if "mostrar_menu_tesoreria" not in st.session_state:
-    st.session_state["mostrar_menu_tesoreria"] = True
-
-col_btn_m, col_info_m = st.columns([1.6, 6])
-with col_btn_m:
-    label_btn = "🔼 Ocultar Menú" if st.session_state["mostrar_menu_tesoreria"] else "☰ Menú de Opciones"
-    if st.button(label_btn, use_container_width=True, type="primary" if not st.session_state["mostrar_menu_tesoreria"] else "secondary"):
-        st.session_state["mostrar_menu_tesoreria"] = not st.session_state["mostrar_menu_tesoreria"]
-        st.rerun()
-
-with col_info_m:
-    if not st.session_state["mostrar_menu_tesoreria"]:
-        st.caption(f"Sección activa: **{st.session_state['opcion_tesoreria']}** (Pulsa '☰ Menú de Opciones' para cambiar)")
-
-if st.session_state["mostrar_menu_tesoreria"]:
-    idx_def = LISTA_SECCIONES.index(st.session_state["opcion_tesoreria"]) if st.session_state["opcion_tesoreria"] in LISTA_SECCIONES else 0
-    sel_sec = st.selectbox(
-        "Seleccione la sección de Tesorería:",
-        LISTA_SECCIONES,
-        index=idx_def
-    )
-    st.session_state["opcion_tesoreria"] = sel_sec
-
-opcion = st.session_state["opcion_tesoreria"]
-st.markdown("---")
+def agregar_tendencia_lineal(fig, x_labels, y_vals, nombre_traza="Línea de Tendencia"):
+    y_arr = np.array(y_vals, dtype=float)
+    x_idx = np.arange(len(x_labels))
+    if np.any(y_arr > 0):
+        try:
+            coefs = np.polyfit(x_idx, y_arr, 1)
+            y_trend = np.polyval(coefs, x_idx)
+            fig.add_trace(go.Scatter(
+                x=x_labels, 
+                y=y_trend,
+                mode="lines",
+                name=nombre_traza,
+                line=dict(color="#F59E0B", width=2.5, dash="dash")
+            ))
+        except Exception:
+            pass
 
 # ==============================================================================
-# 1. LIBRO DETALLADO
+# 1. LIBRO DETALLADO CON FILTROS FLOTANTES Y DESCARGA DINÁMICA
 # ==============================================================================
-if opcion == "📖 Libro Detallado":
+if opcion == "Libro Detallado":
     df_mov = core.read_db("SELECT * FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
+    
     if df_mov.empty:
         st.info("No hay movimientos registrados en el libro de Tesorería.")
     else:
-        with st.expander("🔎 Filtros de Visualización del Libro de Caja", expanded=True):
-            c1, c2, c3 = st.columns(3)
-            with c1: f_tipo = st.selectbox("Filtrar por Tipo:", ["Todos", "Ingreso", "Egreso"])
-            with c2: f_fondo = st.selectbox("Filtrar por Fondo:", ["Todos"] + fondos)
-            with c3: f_txt = st.text_input("Buscar por Detalle, Comprobante o Responsable:")
+        df_mov["dt"] = pd.to_datetime(df_mov["fecha"], errors="coerce")
+        df_mov["anio"] = df_mov["dt"].dt.year
+        df_mov["mes_num"] = df_mov["dt"].dt.month
 
+        # PANEL FLOTANTE DE OPCIONES DE FILTRADO
+        with st.expander("🔎 Filtros Avanzados de Consulta y Descarga", expanded=True):
+            f1, f2, f3, f4 = st.columns(4)
+            with f1:
+                anios_disp = ["Todos"] + sorted([int(a) for a in df_mov["anio"].dropna().unique()], reverse=True)
+                filtro_anio = st.selectbox("Año:", anios_disp, index=0)
+            with f2:
+                filtro_mes = st.selectbox("Mes:", ["Todos"] + core.MESES, index=0)
+            with f3:
+                filtro_tipo = st.selectbox("Tipo de Movimiento:", ["Todos", "Ingreso", "Egreso"])
+            with f4:
+                # FILTRO DE MEDIO SOLICITADO: EFECTIVO, BANCOS O AMBOS
+                filtro_medio = st.selectbox("Medio de Entrega:", ["Ambos (Todos)", "Efectivo", "Depósito / Transferencia (Bancos)"])
+
+            f5, f6, f7 = st.columns([1.5, 1.5, 3])
+            with f5:
+                filtro_fondo = st.selectbox("Fondo:", ["Todos"] + fondos)
+            with f6:
+                cats_existentes = ["Todas"] + sorted([str(c) for c in df_mov["categoria"].dropna().unique() if str(c).strip()])
+                filtro_cat = st.selectbox("Categoría:", cats_existentes)
+            with f7:
+                filtro_txt = st.text_input("Búsqueda Rápida:", placeholder="Buscar por detalle, comprobante o responsable...")
+
+        # Aplicación de los filtros
         df_fil = df_mov.copy()
-        if f_tipo != "Todos": 
-            df_fil = df_fil[df_fil["tipo"] == f_tipo]
-        if f_fondo != "Todos": 
-            df_fil = df_fil[df_fil["fondo"] == f_fondo]
-        if f_txt.strip():
-            txt_l = f_txt.strip().lower()
-            df_fil = df_fil[
-                df_fil["detalle"].astype(str).str.lower().str.contains(txt_l) |
-                df_fil["responsable"].astype(str).str.lower().str.contains(txt_l) |
-                df_fil["comprobante"].astype(str).str.lower().str.contains(txt_l)
-            ]
+        filtros_activos = []
 
-        tot_ing = float(df_fil[df_fil["tipo"] == "Ingreso"]["monto"].sum())
-        tot_egr = float(df_fil[df_fil["tipo"] == "Egreso"]["monto"].sum())
+        if filtro_anio != "Todos":
+            df_fil = df_fil[df_fil["anio"] == filtro_anio]
+            filtros_activos.append(f"Año {filtro_anio}")
+        if filtro_mes != "Todos":
+            m_num = core.MESES.index(filtro_mes) + 1
+            df_fil = df_fil[df_fil["mes_num"] == m_num]
+            filtros_activos.append(f"Mes {filtro_mes}")
+        if filtro_tipo != "Todos":
+            df_fil = df_fil[df_fil["tipo"] == filtro_tipo]
+            filtros_activos.append(filtro_tipo)
+        if filtro_medio == "Efectivo":
+            df_fil = df_fil[df_fil["medio"] == "Efectivo"]
+            filtros_activos.append("Solo Efectivo")
+        elif filtro_medio == "Depósito / Transferencia (Bancos)":
+            df_fil = df_fil[df_fil["medio"] != "Efectivo"]
+            filtros_activos.append("Solo Bancos")
+        if filtro_fondo != "Todos":
+            df_fil = df_fil[df_fil["fondo"] == filtro_fondo]
+            filtros_activos.append(f"Fondo {filtro_fondo}")
+        if filtro_cat != "Todas":
+            df_fil = df_fil[df_fil["categoria"] == filtro_cat]
+            filtros_activos.append(f"Cat: {filtro_cat}")
+        if filtro_txt.strip():
+            t_low = filtro_txt.strip().lower()
+            df_fil = df_fil[
+                df_fil["detalle"].astype(str).str.lower().str.contains(t_low) |
+                df_fil["comprobante"].astype(str).str.lower().str.contains(t_low) |
+                df_fil["responsable"].astype(str).str.lower().str.contains(t_low)
+            ]
+            filtros_activos.append(f"Texto '{filtro_txt}'")
+
+        txt_filtros_resumen = ", ".join(filtros_activos) if filtros_activos else "Sin filtros (Total consolidado)"
+
+        # Cálculos de totales con conversión estricta a float
+        tot_ing = float(df_fil[df_fil["tipo"] == "Ingreso"]["monto"].sum()) if not df_fil.empty else 0.0
+        tot_egr = float(df_fil[df_fil["tipo"] == "Egreso"]["monto"].sum()) if not df_fil.empty else 0.0
         saldo_neto = tot_ing - tot_egr
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Ingresos Totales", f"S/. {tot_ing:,.2f}")
-        m2.metric("Egresos Totales", f"S/. {tot_egr:,.2f}", delta=f"-S/. {tot_egr:,.2f}", delta_color="inverse")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Ingresos Filtrados", f"S/. {tot_ing:,.2f}")
+        m2.metric("Egresos Filtrados", f"S/. {tot_egr:,.2f}", delta=f"-S/. {tot_egr:,.2f}", delta_color="inverse")
         m3.metric("Saldo Neto", f"S/. {saldo_neto:,.2f}")
+        m4.metric("Registros Listados", f"{len(df_fil)} mov.")
 
-        st.markdown("##### 💼 Distribución por Fondos:")
-        cols_fondos = st.columns(min(len(fondos), 5))
-        for i, f_nom in enumerate(fondos[:5]):
-            ing_f = float(df_mov[(df_mov["fondo"] == f_nom) & (df_mov["tipo"] == "Ingreso")]["monto"].sum())
-            egr_f = float(df_mov[(df_mov["fondo"] == f_nom) & (df_mov["tipo"] == "Egreso")]["monto"].sum())
-            cols_fondos[i].metric(f_nom, f"S/. {ing_f - egr_f:,.2f}")
-
-        st.markdown("---")
-        col_pdf, col_xls, _ = st.columns([3, 3, 4])
+        # BOTONES DE DESCARGA SEGÚN LO FILTRADO
+        col_pdf, col_xls, col_aviso = st.columns([2.5, 2.5, 4])
         with col_pdf:
             if not df_fil.empty:
-                pdf_caja_bytes = generar_pdf_libro_caja(df_fil, tot_ing, tot_egr, saldo_neto)
+                pdf_bytes = generar_pdf_libro_caja(df_fil, tot_ing, tot_egr, saldo_neto, txt_filtros_resumen)
                 st.download_button(
-                    label="📄 Descargar Libro de Caja en PDF",
-                    data=pdf_caja_bytes,
-                    file_name=f"Libro_Caja_Nazareth_{date.today()}.pdf",
-                    mime="application/pdf"
+                    label="📄 Descargar PDF (Vista Actual)",
+                    data=pdf_bytes,
+                    file_name=f"Libro_Caja_Filtrado_{date.today()}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
                 )
         with col_xls:
             if not df_fil.empty:
-                excel_caja_bytes = generar_excel_tesoreria(df_fil[["fecha", "tipo", "categoria", "subcategoria", "fondo", "monto", "medio", "comprobante", "responsable", "detalle"]])
+                cols_para_excel = ["fecha", "tipo", "medio", "categoria", "subcategoria", "fondo", "monto", "comprobante", "responsable", "detalle"]
+                cols_presentes = [c for c in cols_para_excel if c in df_fil.columns]
+                excel_bytes = generar_excel_tesoreria(df_fil[cols_presentes])
                 st.download_button(
-                    label="📊 Descargar Libro de Caja en Excel (.xlsx)",
-                    data=excel_caja_bytes,
-                    file_name=f"Libro_Caja_Nazareth_{date.today()}.xlsx",
+                    label="📊 Descargar Excel (Vista Actual)",
+                    data=excel_bytes,
+                    file_name=f"Libro_Caja_Filtrado_{date.today()}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
+                    type="primary",
+                    use_container_width=True
                 )
+        with col_aviso:
+            st.caption(f"Filtro activo: **{txt_filtros_resumen}**")
 
-        map_cols_ver = {
-            "fecha": "Fecha", "tipo": "Tipo", "categoria": "Categoría", "subcategoria": "Rubro",
-            "fondo": "Fondo", "monto": "Monto (S/.)", "medio": "Medio",
-            "comprobante": "Comprobante / Folio", "responsable": "Responsable", "detalle": "Detalle"
+        st.markdown("---")
+
+        # Visualización de la tabla
+        map_cols = {
+            "fecha": "Fecha", "tipo": "Tipo", "medio": "Medio", "fondo": "Fondo",
+            "categoria": "Categoría", "subcategoria": "Rubro", "monto": "Monto (S/.)",
+            "comprobante": "Comprobante", "responsable": "Responsable", "detalle": "Detalle"
         }
-        cols_existentes = [c for c in map_cols_ver.keys() if c in df_fil.columns]
-        df_mostrar = df_fil[cols_existentes].rename(columns=map_cols_ver)
-        st.dataframe(df_mostrar.style.format({"Monto (S/.)": "S/. {:,.2f}"}), use_container_width=True, hide_index=True)
+        cols_mostrar = [c for c in map_cols.keys() if c in df_fil.columns]
+        st.dataframe(
+            df_fil[cols_mostrar].rename(columns=map_cols).style.format({"Monto (S/.)": "S/. {:,.2f}"}),
+            use_container_width=True,
+            hide_index=True
+        )
 
 # ==============================================================================
-# 2. EVOLUCIÓN Y GRÁFICOS
+# 2. EVOLUCIÓN Y 4 CUADROS GRÁFICOS CON PROYECCIONES
 # ==============================================================================
-elif opcion == "📈 Evolución y Gráficos":
-    df_mov = core.read_db("SELECT fecha, tipo, monto, fondo FROM public.movimientos WHERE comprobante NOT IN ('ASIENTO-APERTURA') AND estado_credito != 'A Credito' AND fecha IS NOT NULL")
+elif opcion == "Evolución y Gráficos":
+    df_mov = core.read_db("SELECT fecha, tipo, monto, medio, categoria, comprobante FROM public.movimientos WHERE comprobante NOT IN ('ASIENTO-APERTURA') AND fecha IS NOT NULL")
     
     if df_mov.empty:
-        st.info("No hay suficientes datos registrados para generar gráficas.")
+        st.info("No hay suficientes registros para proyectar gráficas estadísticas.")
     else:
         df_mov["fecha_dt"] = pd.to_datetime(df_mov["fecha"], errors="coerce")
         df_mov = df_mov.dropna(subset=["fecha_dt"])
@@ -352,116 +296,131 @@ elif opcion == "📈 Evolución y Gráficos":
         df_mov["Mes"] = df_mov["MesNum"].map(core.MESES_NOMBRES)
 
         anios_graf = sorted(list(df_mov["Anio"].unique()), reverse=True)
-        col_g1, col_g2 = st.columns([2, 2])
-        with col_g1:
-            anio_graf = st.selectbox("Año de Análisis:", anios_graf, index=0)
-        with col_g2:
-            mes_analisis = st.selectbox("Mes para Informe y Dictamen PDF:", core.MESES, index=date.today().month - 1)
+        
+        # Filtro de cabecera para los gráficos
+        c_g1, c_g2 = st.columns([2, 2])
+        with c_g1:
+            anio_graf = st.selectbox("Año a Graficar:", anios_disp := anios_graf, index=0)
+        with c_g2:
+            filtro_medio_graf = st.selectbox("Medio de Pago para Ingresos y Egresos:", ["Ambos (Efectivo y Bancos)", "Solo Efectivo", "Solo Depósito / Transferencia (Bancos)"])
 
         df_anio = df_mov[df_mov["Anio"] == anio_graf].copy()
 
-        pivot = df_anio.pivot_table(index="Mes", columns="tipo", values="monto", aggfunc="sum", fill_value=0.0).reindex(core.MESES).fillna(0.0)
-        if "Ingreso" not in pivot.columns: pivot["Ingreso"] = 0.0
-        if "Egreso" not in pivot.columns: pivot["Egreso"] = 0.0
+        # Filtrado de medio si corresponde
+        if filtro_medio_graf == "Solo Efectivo":
+            df_anio_medio = df_anio[df_anio["medio"] == "Efectivo"]
+        elif filtro_medio_graf == "Solo Depósito / Transferencia (Bancos)":
+            df_anio_medio = df_anio[df_anio["medio"] != "Efectivo"]
+        else:
+            df_anio_medio = df_anio
 
-        pivot["Saldo"] = pivot["Ingreso"] - pivot["Egreso"]
+        # Tabulación mensual
+        pivot_m = df_anio_medio.pivot_table(index="Mes", columns="tipo", values="monto", aggfunc="sum", fill_value=0.0).reindex(core.MESES).fillna(0.0)
+        if "Ingreso" not in pivot_m.columns: pivot_m["Ingreso"] = 0.0
+        if "Egreso" not in pivot_m.columns: pivot_m["Egreso"] = 0.0
+        pivot_m["Saldo"] = pivot_m["Ingreso"] - pivot_m["Egreso"]
 
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            name="1. Ingresos", x=core.MESES, y=pivot["Ingreso"],
-            marker_color="#10B981", text=pivot["Ingreso"].apply(lambda v: f"S/. {v:,.0f}" if v > 0 else ""),
+        # ----------------------------------------------------------------------
+        # CUADRO 1: SOLO INGRESOS + TENDENCIA DE PROYECCIÓN
+        # ----------------------------------------------------------------------
+        st.markdown("#### 1. Evolución Mensual de Ingresos")
+        fig_ing = go.Figure()
+        fig_ing.add_trace(go.Bar(
+            name="Ingresos Mensuales", 
+            x=core.MESES, 
+            y=pivot_m["Ingreso"],
+            marker_color="#10B981", 
+            text=pivot_m["Ingreso"].apply(lambda v: f"S/. {v:,.0f}" if v > 0 else ""),
             textposition="auto"
         ))
-        fig.add_trace(go.Bar(
-            name="2. Egresos", x=core.MESES, y=pivot["Egreso"],
-            marker_color="#EF4444", text=pivot["Egreso"].apply(lambda v: f"S/. {v:,.0f}" if v > 0 else ""),
-            textposition="auto"
-        ))
-        fig.add_trace(go.Bar(
-            name="3. Saldo (Diferencia)", x=core.MESES, y=pivot["Saldo"],
-            marker_color="#1E3A8A", text=pivot["Saldo"].apply(lambda v: f"S/. {v:,.0f}" if v != 0 else ""),
-            textposition="auto"
-        ))
-        fig.add_trace(go.Scatter(
-            name="Tendencia de Saldo", x=core.MESES, y=pivot["Saldo"],
-            mode="lines+markers", line=dict(color="#F59E0B", width=3),
-            marker=dict(size=7)
-        ))
-
-        fig.update_layout(
-            barmode="group",
-            title=f"Comparativa Mensual de Tesorería ({anio_graf}): Ingresos vs. Egresos vs. Saldo Neto",
-            xaxis_title="Mes",
-            yaxis_title="Monto (S/.)",
-            height=480,
+        agregar_tendencia_lineal(fig_ing, core.MESES, pivot_m["Ingreso"].values, "Proyección / Tendencia Ingresos")
+        fig_ing.update_layout(
+            title=f"Ingresos Mensuales ({anio_graf}) — {filtro_medio_graf}",
+            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=390,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig_ing, use_container_width=True)
 
-        st.markdown("---")
-        st.markdown(f"#### 📊 Diagnóstico y Estadísticas de: **{mes_analisis} {anio_graf}**")
-        
-        mes_num_sel = core.MESES.index(mes_analisis) + 1
-        df_mes_sel = df_anio[df_anio["MesNum"] == mes_num_sel]
-
-        ing_mes = float(df_mes_sel[df_mes_sel["tipo"] == "Ingreso"]["monto"].sum())
-        egr_mes = float(df_mes_sel[df_mes_sel["tipo"] == "Egreso"]["monto"].sum())
-        sal_mes = ing_mes - egr_mes
-        tasa_ahorro = ((sal_mes / ing_mes) * 100) if ing_mes > 0 else 0.0
-        relacion_gasto = ((egr_mes / ing_mes) * 100) if ing_mes > 0 else 0.0
-
-        c_m1, c_m2, c_m3, c_m4 = st.columns(4)
-        c_m1.metric("Ingresos del Mes", f"S/. {ing_mes:,.2f}")
-        c_m2.metric("Egresos del Mes", f"S/. {egr_mes:,.2f}")
-        c_m3.metric("Saldo Neto (Diferencia)", f"S/. {sal_mes:,.2f}", delta="Superávit" if sal_mes >= 0 else "Déficit")
-        c_m4.metric("Margen de Retención / Ahorro", f"{tasa_ahorro:.1f}%")
-
-        df_fondos_res = []
-        for fn in fondos:
-            i_f = float(df_mes_sel[(df_mes_sel["fondo"] == fn) & (df_mes_sel["tipo"] == "Ingreso")]["monto"].sum())
-            e_f = float(df_mes_sel[(df_mes_sel["fondo"] == fn) & (df_mes_sel["tipo"] == "Egreso")]["monto"].sum())
-            df_fondos_res.append({"Fondo": fn, "Ingreso": i_f, "Egreso": e_f, "Saldo": i_f - e_f})
-        df_fondos_m = pd.DataFrame(df_fondos_res)
-
-        if sal_mes > 0:
-            conclusion_auto = (
-                f"1. El mes de {mes_analisis} {anio_graf} cerró con un superávit neto de S/. {sal_mes:,.2f}, registrando una tasa de retención del {tasa_ahorro:.1f}% sobre los ingresos.\n"
-                f"2. El gasto operativo representó el {relacion_gasto:.1f}% de la recaudación total, manteniéndose dentro de márgenes saludables de sostenibilidad.\n"
-                f"3. Se recomienda destinar el remanente disponible al fondo Pro-Templo o a provisiones para compromisos fijos del siguiente periodo."
-            )
-        elif sal_mes < 0:
-            conclusion_auto = (
-                f"1. El mes de {mes_analisis} {anio_graf} registró un déficit operativo de S/. {abs(sal_mes):,.2f}, superando los gastos a los ingresos en un {relacion_gasto:.1f}%.\n"
-                f"2. Esta variación negativa requiere amortización con los fondos de reserva acumulados de periodos anteriores.\n"
-                f"3. Se aconseja priorizar los pagos indispensables y evaluar campañas extraordinarias pro-fondos para restituir el saldo de caja."
-            )
-        else:
-            conclusion_auto = (
-                f"1. El mes de {mes_analisis} {anio_graf} finalizó en equilibrio financiero exacto (S/. 0.00 de diferencia neta).\n"
-                f"2. Los ingresos recaudados financiaron en su totalidad los gastos ejecutados en el periodo.\n"
-                f"3. Se recomienda incrementar la captación de aportes para generar reservas ante contingencias futuras."
-            )
-
-        with st.expander("📝 Conclusiones y Diagnóstico Financiero (Editable para el Informe):", expanded=True):
-            conclusiones_edit = st.text_area("Dictamen de Tesorería:", value=conclusion_auto, height=110)
-
-        pdf_analisis_bytes = generar_pdf_analisis_financiero(
-            mes_analisis, anio_graf, ing_mes, egr_mes, sal_mes, df_fondos_m, conclusiones_edit
+        # ----------------------------------------------------------------------
+        # CUADRO 2: SOLO EGRESOS + TENDENCIA DE PROYECCIÓN
+        # ----------------------------------------------------------------------
+        st.markdown("#### 2. Evolución Mensual de Egresos y Gastos")
+        fig_egr = go.Figure()
+        fig_egr.add_trace(go.Bar(
+            name="Egresos Mensuales", 
+            x=core.MESES, 
+            y=pivot_m["Egreso"],
+            marker_color="#EF4444", 
+            text=pivot_m["Egreso"].apply(lambda v: f"S/. {v:,.0f}" if v > 0 else ""),
+            textposition="auto"
+        ))
+        agregar_tendencia_lineal(fig_egr, core.MESES, pivot_m["Egreso"].values, "Proyección / Tendencia Gastos")
+        fig_egr.update_layout(
+            title=f"Egresos y Gastos Mensuales ({anio_graf}) — {filtro_medio_graf}",
+            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=390,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-        col_desc, _ = st.columns([3, 4])
-        with col_desc:
-            st.download_button(
-                label=f"📄 Descargar Análisis Financiero en PDF ({mes_analisis} {anio_graf})",
-                data=pdf_analisis_bytes,
-                file_name=f"Analisis_Financiero_{mes_analisis}_{anio_graf}.pdf",
-                mime="application/pdf",
-                type="primary"
-            )
+        st.plotly_chart(fig_egr, use_container_width=True)
+
+        # ----------------------------------------------------------------------
+        # CUADRO 3: EVOLUCIÓN DE LOS DIEZMOS + TENDENCIA DE PROYECCIÓN
+        # ----------------------------------------------------------------------
+        st.markdown("#### 3. Evolución Histórica de Diezmos")
+        # Leer aportes directamente de diezmos
+        df_diezmos_bd = core.read_db("SELECT fecha, monto FROM public.diezmos WHERE fecha IS NOT NULL")
+        if not df_diezmos_bd.empty:
+            df_diezmos_bd["dt"] = pd.to_datetime(df_diezmos_bd["fecha"], errors="coerce")
+            df_diezmos_bd = df_diezmos_bd.dropna(subset=["dt"])
+            df_dz_anio = df_diezmos_bd[df_diezmos_bd["dt"].dt.year == anio_graf].copy()
+            df_dz_anio["Mes"] = df_dz_anio["dt"].dt.month.map(core.MESES_NOMBRES)
+            diezmos_mes = df_dz_anio.groupby("Mes")["monto"].sum().reindex(core.MESES).fillna(0.0)
+        else:
+            diezmos_mes = pd.Series(0.0, index=core.MESES)
+
+        fig_dz = go.Figure()
+        fig_dz.add_trace(go.Bar(
+            name="Diezmos Recaudados",
+            x=core.MESES,
+            y=diezmos_mes.values,
+            marker_color="#6366F1",
+            text=[f"S/. {v:,.0f}" if v > 0 else "" for v in diezmos_mes.values],
+            textposition="auto"
+        ))
+        agregar_tendencia_lineal(fig_dz, core.MESES, diezmos_mes.values, "Proyección de Fidelidad / Diezmos")
+        fig_dz.update_layout(
+            title=f"Comportamiento de Diezmos ({anio_graf})",
+            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=390,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_dz, use_container_width=True)
+
+        # ----------------------------------------------------------------------
+        # CUADRO 4: SALDOS QUE QUEDAN POR MES + TENDENCIA DE PROYECCIÓN
+        # ----------------------------------------------------------------------
+        st.markdown("#### 4. Saldos Netos Remanentes por Mes (Superávit / Déficit)")
+        colores_saldo = ["#1E3A8A" if s >= 0 else "#DC2626" for s in pivot_m["Saldo"].values]
+        
+        fig_sal = go.Figure()
+        fig_sal.add_trace(go.Bar(
+            name="Saldo Neto del Mes",
+            x=core.MESES,
+            y=pivot_m["Saldo"],
+            marker_color=colores_saldo,
+            text=pivot_m["Saldo"].apply(lambda v: f"S/. {v:,.0f}" if v != 0 else ""),
+            textposition="auto"
+        ))
+        agregar_tendencia_lineal(fig_sal, core.MESES, pivot_m["Saldo"].values, "Tendencia de Superávit / Capacidad de Ahorro")
+        fig_sal.update_layout(
+            title=f"Saldos Netos por Periodo ({anio_graf})",
+            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=390,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_sal, use_container_width=True)
 
 # ==============================================================================
 # 3. REGISTRAR MOVIMIENTO MANUAL
 # ==============================================================================
-elif opcion == "➕ Registrar Movimiento":
+elif opcion == "Registrar Movimiento":
     t_mov = st.radio("Tipo:", ["Egreso (Gasto)", "Ingreso"], horizontal=True)
     tipo_cl = "Egreso" if "Egreso" in t_mov else "Ingreso"
 
@@ -502,7 +461,7 @@ elif opcion == "➕ Registrar Movimiento":
             st.rerun()
 
 # ==============================================================================
-# 4. MODIFICAR O ELIMINAR (UNIFICADO CON FILTROS INTELIGENTES)
+# 4. MODIFICAR O ELIMINAR
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### ⚙️ Gestión de Asientos de Tesorería (Modificar o Eliminar)")
