@@ -12,15 +12,15 @@ from PIL import Image
 from supabase import create_client, Client
 
 # ==============================================================================
-# CONFIGURACIÓN GENERAL Y MAPEO EXACTO DE TODOS LOS MÓDULOS
+# CONFIGURACIÓN GENERAL Y MAPEO EXACTO DE MÓDULOS
 # ==============================================================================
 MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 MEDIOS = ["Efectivo", "Depósito / Transferencia"]
 MESES_NUM = {m: i + 1 for i, m in enumerate(MESES)}
 MESES_NOMBRES = {v: k for k, v in MESES_NUM.items()}
 
-# Mapeo de los módulos con los nombres de archivo de tu carpeta pages/
 MAPA_MODULOS_SIDEBAR = {
+    "panel principal": ["0_panel_principal", "panel_principal", "panel", "inicio"],
     "miembros": ["1_miembros", "miembros", "padron"],
     "diezmos": ["2_diezmos", "diezmos"],
     "foro / recordatorios": ["3_foro_recordatorios", "foro_recordatorios", "recordatorios", "foro"],
@@ -123,18 +123,34 @@ def requerir_login():
             st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
     else:
+        # Prevenir renderizar el bloque de usuario dos veces en el mismo ciclo
+        try:
+            from streamlit.runtime.scriptrunner import get_script_run_ctx
+            ctx = get_script_run_ctx()
+            current_run_id = ctx.script_run_id if ctx else None
+        except Exception:
+            current_run_id = None
+
+        if current_run_id is not None and st.session_state.get("_ultimo_run_sidebar") == current_run_id:
+            return
+
+        st.session_state["_ultimo_run_sidebar"] = current_run_id
+
         with st.sidebar:
             st.markdown(f"👤 **{st.session_state['usuario_actual']['nombre']}**")
             st.caption(f"Rol: {st.session_state['usuario_actual']['rol']}")
-            if st.button("🚪 Cerrar Sesión", use_container_width=True):
+            if st.button("🚪 Cerrar Sesión", key="btn_logout_sidebar_global", use_container_width=True):
                 st.session_state["autenticado"] = False
                 st.session_state["usuario_actual"] = None
+                st.session_state["_ultimo_run_sidebar"] = None
                 st.rerun()
             st.markdown("---")
 
 def verificar_acceso_pagina(nombre_modulo: str):
-    """Impide la ejecución de la página si el usuario no tiene permiso asignado."""
-    requerir_login()
+    """Verifica si el usuario tiene permiso para acceder al módulo."""
+    if not st.session_state.get("autenticado", False):
+        requerir_login()
+
     user = st.session_state.get("usuario_actual", {})
     if user.get("rol") == "Administrador":
         return True
@@ -151,7 +167,7 @@ def verificar_acceso_pagina(nombre_modulo: str):
     return True
 
 # ==============================================================================
-# CONEXIÓN DIRECTA CON SUPABASE STORAGE
+# CONEXIÓN CON SUPABASE STORAGE
 # ==============================================================================
 @st.cache_resource
 def init_supabase() -> Client:
@@ -267,7 +283,7 @@ def registrar_log(modulo, accion, descripcion):
     query_db("INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (%s, %s, %s, %s)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), modulo, accion, descripcion))
 
 # ==============================================================================
-# DISEÑO Y ESTILOS GLOBALES (OCULTAMIENTO DE MÓDULOS DE LA BARRA LATERAL)
+# DISEÑO Y ESTILOS GLOBALES
 # ==============================================================================
 def aplicar_estilos_base():
     verificar_licencia()
@@ -279,7 +295,6 @@ def aplicar_estilos_base():
         if "TODOS" not in permisos_raw.upper():
             permisos_user = [p.strip().lower() for p in permisos_raw.split(",") if p.strip()]
 
-            # Ocultar página raíz / Panel Principal si no fue autorizada
             if "panel principal" not in permisos_user:
                 css_ocultar_paginas += """
                 [data-testid="stSidebarNav"] li:has(a[href="/"]),
@@ -291,7 +306,6 @@ def aplicar_estilos_base():
                 }
                 """
 
-            # Ocultar módulos de pages/ que no estén en la lista de permisos
             for mod_nombre, keywords in MAPA_MODULOS_SIDEBAR.items():
                 if mod_nombre not in permisos_user:
                     for kw in keywords:
@@ -314,7 +328,6 @@ header[data-testid="stHeader"] {{
     z-index: 100 !important;
 }}
 
-/* BOTÓN FLOTANTE PERMANENTE PARA ABRIR / CERRAR MENÚ (EN PC Y MÓVIL) */
 [data-testid="collapsedControl"],
 [data-testid="stSidebarCollapsedControl"] {{
     display: flex !important;
@@ -347,7 +360,6 @@ header[data-testid="stHeader"] {{
     color: #1E3A8A !important;
 }}
 
-/* Barra lateral */
 [data-testid="stSidebar"] {{ 
     background: #FFFFFF !important; 
     border-right: 1px solid #E2E8F0 !important; 
