@@ -1,5 +1,6 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
 import pandas as pd
 from contextlib import contextmanager
 from datetime import datetime, date
@@ -30,6 +31,46 @@ MAPA_MODULOS_SIDEBAR = {
     "tesorería": ["7_tesoreria", "tesoreria"],
     "configuración": ["8_configuracion", "configuracion", "config"]
 }
+
+# ==============================================================================
+# POOL PERSISTENTE DE CONEXIONES (ALTA VELOCIDAD Y RESISTENCIA A INACTIVIDAD)
+# ==============================================================================
+@st.cache_resource
+def get_db_pool():
+    url = st.secrets["SUPABASE_DB_URL"]
+    return ThreadedConnectionPool(
+        minconn=1,
+        maxconn=10,
+        dsn=url,
+        cursor_factory=RealDictCursor
+    )
+
+@contextmanager
+def get_db():
+    pool = get_db_pool()
+    conn = pool.getconn()
+    try:
+        # Validación de conexión activa: si estuvo inactiva y se cerró, se renueva
+        if conn.closed:
+            pool.putconn(conn, close=True)
+            conn = pool.getconn()
+        else:
+            try:
+                with conn.cursor() as cur_check:
+                    cur_check.execute("SELECT 1;")
+            except Exception:
+                pool.putconn(conn, close=True)
+                conn = pool.getconn()
+
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute("SET search_path TO public;")
+        yield conn
+    finally:
+        try:
+            pool.putconn(conn)
+        except Exception:
+            pass
 
 # ==============================================================================
 # SEGURIDAD, LOGIN Y VERIFICACIÓN DE ACCESOS
@@ -123,7 +164,6 @@ def requerir_login():
             st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
     else:
-        # Prevenir renderizar el bloque de usuario dos veces en el mismo ciclo
         try:
             from streamlit.runtime.scriptrunner import get_script_run_ctx
             ctx = get_script_run_ctx()
@@ -200,17 +240,6 @@ def comprimir_y_subir_foto(archivo_subido, nombre_base):
         st.warning(f"Aviso de Storage: {e}")
         return ""
 
-@contextmanager
-def get_db():
-    url = st.secrets["SUPABASE_DB_URL"]
-    conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SET search_path TO public;")
-        yield conn
-    finally:
-        conn.close()
-
 def es_periodo_cerrado(fecha_param):
     if not fecha_param: return False
     str_val = str(fecha_param)
@@ -245,7 +274,7 @@ def query_db(query, params=(), commit=True):
     
     tiene_returning = "RETURNING" in q_limpia
     if q_limpia.startswith("INSERT") and not tiene_returning:
-        if "MIEMBROS" not in q_limpia and "AUDITORIA" not in q_limpia:
+        if "MIEMBROS" not in q_limpia and "AUDITORIA" not in q_limpia and "CONFIG_IGLESIA" not in q_limpia and "CIERRES_MENSUALES" not in q_limpia:
             pg_query += " RETURNING id"
 
     params_limpios = [p.item() if hasattr(p, "item") else p for p in params]
@@ -266,7 +295,7 @@ def query_db(query, params=(), commit=True):
                 st.cache_data.clear()
             return inserted_id
 
-@st.cache_data
+@st.cache_data(ttl=180, show_spinner=False)
 def read_db(query, params=()):
     pg_query = query.replace("?", "%s")
     params_limpios = [p.item() if hasattr(p, "item") else p for p in params]
