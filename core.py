@@ -245,35 +245,32 @@ def aplicar_estilos_base():
     verificar_licencia()
     css_string = """
 <style translate="no">
-#MainMenu { visibility: hidden !important; }
-footer { visibility: hidden !important; }
-.stDeployButton { display: none !important; }
+#MainMenu { display: none !important; }
+footer { display: none !important; }
+[data-testid="stDeployButton"] { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+[data-testid="stStatusWidget"] { display: none !important; }
 
-/* Ocultar barra de herramientas de Streamlit sin bloquear el botón de menú lateral */
-[data-testid="stToolbar"], 
-[data-testid="stHeaderActionElements"],
-[data-testid="stToolbarActions"],
-.stAppToolbar { 
-    display: none !important; 
-    visibility: hidden !important; 
-}
-
-/* Mantener el botón para desplegar la barra lateral en celular */
-header[data-testid="stHeader"] {
-    background-color: transparent !important;
-}
-
-[data-testid="collapsedControl"] {
+/* Botón de apertura de barra lateral en móvil destacado y siempre visible */
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"] {
     display: flex !important;
     visibility: visible !important;
-    z-index: 999999 !important;
-    background: #FFFFFF !important;
-    border-radius: 8px !important;
-    border: 1px solid #CBD5E1 !important;
-    box-shadow: 0 2px 6px rgba(15,23,42,0.08) !important;
-    color: #1E40AF !important;
-    top: 10px !important;
-    left: 10px !important;
+    opacity: 1 !important;
+    background-color: #1E3A8A !important;
+    color: #FFFFFF !important;
+    border-radius: 10px !important;
+    padding: 6px 12px !important;
+    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.35) !important;
+    z-index: 9999999 !important;
+}
+
+[data-testid="collapsedControl"] svg,
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="stSidebarCollapseButton"] svg {
+    fill: #FFFFFF !important;
+    stroke: #FFFFFF !important;
 }
 
 [data-testid="stSidebar"] { 
@@ -302,10 +299,83 @@ html, body, [class*="css"], .stApp {
     background-attachment: fixed !important; 
 }
 
-/* Ajuste responsive para los radio buttons horizontales (pestañas de acción) */
+/* ========================================================================== */
+/* PESTAÑAS HORIZONTALES (st.radio y st.tabs) ADAPTABLES A MÓVIL */
+/* ========================================================================== */
 div[data-testid="stRadio"] > div[role="radiogroup"] {
+    display: flex !important;
+    flex-direction: row !important;
     flex-wrap: wrap !important;
     gap: 8px !important;
+    width: 100% !important;
+}
+
+div[data-testid="stRadio"] > div[role="radiogroup"] > label {
+    background: #FFFFFF !important;
+    border: 1.5px solid #CBD5E1 !important;
+    border-radius: 10px !important;
+    padding: 8px 14px !important;
+    margin: 0 !important;
+    cursor: pointer !important;
+    flex: 1 1 auto !important;
+    text-align: center !important;
+    justify-content: center !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04) !important;
+    transition: all 0.2s ease !important;
+}
+
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:hover {
+    border-color: #1E40AF !important;
+    background: #EFF6FF !important;
+}
+
+/* Ocultar el punto circular del radio button para que luzca como botón pestaña */
+div[data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {
+    display: none !important;
+}
+
+/* Estilo cuando la pestaña está seleccionada */
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {
+    background: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%) !important;
+    border-color: #1E3A8A !important;
+    box-shadow: 0 4px 10px rgba(30, 58, 138, 0.3) !important;
+}
+
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p,
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) span,
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) div {
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+}
+
+/* Pestañas nativas st.tabs responsive */
+.stTabs [data-baseweb="tab-list"] { 
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important; 
+    border-bottom: none !important; 
+    padding-bottom: 8px !important; 
+    padding-top: 4px !important; 
+    width: 100% !important;
+}
+.stTabs [data-baseweb="tab"] { 
+    flex: 1 1 auto !important;
+    text-align: center !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important; 
+    font-weight: 700 !important; 
+    font-size: 13.5px !important; 
+    padding: 9px 18px !important; 
+    border-radius: 10px !important; 
+    color: #475569 !important; 
+    background: #FFFFFF !important; 
+    border: 1px solid #CBD5E1 !important; 
+    box-shadow: 0 2px 4px rgba(15, 23, 42, 0.03) !important; 
+}
+.stTabs [aria-selected="true"] { 
+    color: #FFFFFF !important; 
+    background: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%) !important; 
+    border: 1px solid #1E3A8A !important; 
+    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.35) !important; 
 }
 
 div[data-testid="stMetric"] { 
@@ -313,58 +383,20 @@ div[data-testid="stMetric"] {
     backdrop-filter: blur(10px) !important; 
     border: 1px solid rgba(255, 255, 255, 0.4) !important; 
     border-radius: 16px !important; 
-    padding: 18px 22px !important; 
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02) !important; 
-    transition: transform 0.2s ease, box-shadow 0.2s ease; 
-}
-div[data-testid="stMetric"]:hover { 
-    transform: translateY(-2px); 
-    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04) !important; 
+    padding: 16px 20px !important; 
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04) !important; 
 }
 div[data-testid="stMetricLabel"] p { 
-    font-size: 12.5px !important; 
+    font-size: 12px !important; 
     font-weight: 700 !important; 
     text-transform: uppercase !important; 
-    letter-spacing: 0.5px !important; 
     color: #475569 !important; 
 }
 div[data-testid="stMetricValue"] { 
     font-family: 'Plus Jakarta Sans', sans-serif !important; 
-    font-size: 26px !important; 
+    font-size: 24px !important; 
     font-weight: 800 !important; 
     color: #0F172A !important; 
-    margin-top: 2px !important; 
-}
-
-.stTabs [data-baseweb="tab-list"] { 
-    gap: 12px !important; 
-    border-bottom: none !important; 
-    padding-bottom: 12px !important; 
-    padding-top: 5px !important; 
-    flex-wrap: wrap !important;
-}
-.stTabs [data-baseweb="tab"] { 
-    font-family: 'Plus Jakarta Sans', sans-serif !important; 
-    font-weight: 700 !important; 
-    font-size: 14px !important; 
-    padding: 10px 22px !important; 
-    border-radius: 10px !important; 
-    color: #475569 !important; 
-    background: #FFFFFF !important; 
-    border: 1px solid #CBD5E1 !important; 
-    box-shadow: 0 2px 4px rgba(15, 23, 42, 0.03) !important; 
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important; 
-}
-.stTabs [data-baseweb="tab"]:hover { 
-    border-color: #94A3B8 !important; 
-    background: #F8FAFC !important; 
-}
-.stTabs [aria-selected="true"] { 
-    color: #FFFFFF !important; 
-    background: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%) !important; 
-    border: 1px solid #1E3A8A !important; 
-    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.35) !important; 
-    transform: translateY(-2px); 
 }
 
 div[data-testid="stForm"], div[data-testid="stExpander"] { 
@@ -372,7 +404,7 @@ div[data-testid="stForm"], div[data-testid="stExpander"] {
     backdrop-filter: blur(10px) !important; 
     border: 1px solid #E2E8F0 !important; 
     border-radius: 16px !important; 
-    padding: 22px !important; 
+    padding: 20px !important; 
     box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03) !important; 
 }
 
@@ -385,11 +417,6 @@ button[kind="primary"] {
     padding: 10px 24px !important; 
     color: #FFFFFF !important; 
     box-shadow: 0 4px 10px rgba(30, 58, 138, 0.3) !important; 
-    transition: all 0.2s ease !important; 
-}
-button[kind="primary"]:hover { 
-    box-shadow: 0 6px 15px rgba(30, 58, 138, 0.4) !important; 
-    transform: translateY(-1px); 
 }
 button[kind="secondary"] { 
     border-radius: 10px !important; 
@@ -397,7 +424,6 @@ button[kind="secondary"] {
     border: 1px solid #CBD5E1 !important; 
     background: #FFFFFF !important; 
     color: #334155 !important; 
-    box-shadow: 0 2px 4px rgba(15, 23, 42, 0.02) !important; 
 }
 
 div[data-baseweb="input"] input, div[data-baseweb="select"] { 
@@ -406,33 +432,29 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {
     border: 1px solid #E2E8F0 !important; 
     background: #FFFFFF !important; 
 }
-div[data-baseweb="input"] input:focus, div[data-baseweb="select"]:focus-within { 
-    border-color: #2563EB !important; 
-    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important; 
-}
 </style>
 """
     st.markdown(css_string, unsafe_allow_html=True)
 
     st.markdown("""
-<div style="background: #FFFFFF; padding: 14px 22px; border-radius: 14px; display: flex; align-items: center; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px;">
-<div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 16px; border: 1px solid #DBEAFE;">⛪</div>
+<div style="background: #FFFFFF; padding: 14px 20px; border-radius: 14px; display: flex; align-items: center; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px;">
+<div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 14px; border: 1px solid #DBEAFE; flex-shrink: 0;">⛪</div>
 <div style="flex-grow: 1;">
-<div style="font-size: 11px; font-weight: 700; color: #2563EB; letter-spacing: 1.2px; text-transform: uppercase;">Asambleas de Dios del Perú</div>
-<div style="font-size: 18px; font-weight: 800; color: #0F172A; font-family: 'Plus Jakarta Sans', sans-serif;">Iglesia Evangélica "Nazareth"</div>
+<div style="font-size: 10.5px; font-weight: 700; color: #2563EB; letter-spacing: 1px; text-transform: uppercase;">Asambleas de Dios del Perú</div>
+<div style="font-size: 17px; font-weight: 800; color: #0F172A; font-family: 'Plus Jakarta Sans', sans-serif;">Iglesia Evangélica "Nazareth"</div>
 </div>
-<div style="background: #F1F5F9; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 600; color: #475569;">Sistema SaaS en la Nube</div>
+<div style="background: #F1F5F9; padding: 4px 10px; border-radius: 20px; font-size: 10.5px; font-weight: 600; color: #475569; white-space: nowrap;">Cloud</div>
 </div>
     """, unsafe_allow_html=True)
 
 def banner_modulo(icono, titulo, subtitulo, tag_derecha="Módulo Cloud"):
     st.markdown(f"""
-<div style="background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 100%); padding: 22px 26px; border-radius: 16px; margin-bottom: 24px; color: #FFFFFF; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12); display: flex; justify-content: space-between; align-items: center; border: 1px solid rgba(255,255,255,0.1);">
+<div style="background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 100%); padding: 18px 22px; border-radius: 16px; margin-bottom: 20px; color: #FFFFFF; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12); display: flex; justify-content: space-between; align-items: center; border: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap; gap: 10px;">
 <div>
-<div style="font-size: 24px; font-weight: 800; color: #FFFFFF !important; font-family: 'Plus Jakarta Sans', sans-serif; display: flex; align-items: center; gap: 12px;"><span>{icono}</span> <span style="color: #FFFFFF !important;">{titulo}</span></div>
-<div style="font-size: 13.5px; color: #93C5FD !important; margin-top: 6px; font-weight: 500; letter-spacing: 0.3px;">{subtitulo}</div>
+<div style="font-size: 22px; font-weight: 800; color: #FFFFFF !important; font-family: 'Plus Jakarta Sans', sans-serif; display: flex; align-items: center; gap: 10px;"><span>{icono}</span> <span style="color: #FFFFFF !important;">{titulo}</span></div>
+<div style="font-size: 13px; color: #93C5FD !important; margin-top: 4px; font-weight: 500;">{subtitulo}</div>
 </div>
-<div style="background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.25); padding: 8px 18px; border-radius: 20px; font-size: 12px; font-weight: 700; color: #FFFFFF !important; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px;">{tag_derecha}</div>
+<div style="background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.25); padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 700; color: #FFFFFF !important; white-space: nowrap; text-transform: uppercase;">{tag_derecha}</div>
 </div>
 """, unsafe_allow_html=True)
 
