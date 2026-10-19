@@ -12,15 +12,24 @@ from PIL import Image
 from supabase import create_client, Client
 
 # ==============================================================================
-# CONFIGURACIÓN GENERAL
+# CONFIGURACIÓN GENERAL Y MAPEO DE MÓDULOS DEL SISTEMA
 # ==============================================================================
 MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 MEDIOS = ["Efectivo", "Depósito / Transferencia"]
 MESES_NUM = {m: i + 1 for i, m in enumerate(MESES)}
 MESES_NOMBRES = {v: k for k, v in MESES_NUM.items()}
 
+# Palabras clave de cada página para ocultarlas de la barra lateral automáticamente
+MAPA_MODULOS_SIDEBAR = {
+    "miembros": ["miembro", "padron"],
+    "diezmos": ["diezmo"],
+    "tesorería": ["tesoreria"],
+    "actividades": ["actividad"],
+    "configuración": ["configuracion", "config"]
+}
+
 # ==============================================================================
-# SEGURIDAD Y LOGIN
+# SEGURIDAD, LOGIN Y VERIFICACIÓN DE PERMISOS DE MÓDULOS
 # ==============================================================================
 def verificar_licencia():
     pass 
@@ -32,16 +41,17 @@ def validar_login(usuario: str, password_plana: str):
     u_limpio = usuario.strip().lower()
     p_hash = encriptar_clave(password_plana)
     
+    # Asegurar cuenta maestra de Administrador con acceso total permanente
     if u_limpio == "admin" and password_plana.strip() == "Nazareth2026*":
         try:
             with get_db() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO public.usuarios_sistema (usuario, password_hash, nombre, rol, activo)
-                        VALUES ('admin', %s, 'Administrador General', 'Administrador', TRUE)
+                        INSERT INTO public.usuarios_sistema (usuario, password_hash, nombre, rol, activo, permisos)
+                        VALUES ('admin', %s, 'Administrador General', 'Administrador', TRUE, 'TODOS')
                         ON CONFLICT (usuario) 
-                        DO UPDATE SET password_hash = %s, activo = TRUE
+                        DO UPDATE SET password_hash = %s, activo = TRUE, permisos = 'TODOS'
                         """,
                         (p_hash, p_hash)
                     )
@@ -52,8 +62,18 @@ def validar_login(usuario: str, password_plana: str):
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
+                try:
+                    cur.execute("ALTER TABLE public.usuarios_sistema ADD COLUMN IF NOT EXISTS permisos TEXT DEFAULT 'TODOS';")
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+
                 cur.execute(
-                    "SELECT usuario, nombre, rol FROM public.usuarios_sistema WHERE LOWER(TRIM(usuario)) = %s AND password_hash = %s AND activo = TRUE",
+                    """
+                    SELECT usuario, nombre, rol, COALESCE(permisos, 'TODOS') AS permisos 
+                    FROM public.usuarios_sistema 
+                    WHERE LOWER(TRIM(usuario)) = %s AND password_hash = %s AND activo = TRUE
+                    """,
                     (u_limpio, p_hash)
                 )
                 fila = cur.fetchone()
@@ -109,6 +129,24 @@ def requerir_login():
                 st.session_state["usuario_actual"] = None
                 st.rerun()
             st.markdown("---")
+
+def verificar_acceso_pagina(nombre_modulo: str):
+    """Impide el acceso directo por URL si el usuario no tiene el módulo autorizado."""
+    requerir_login()
+    user = st.session_state.get("usuario_actual", {})
+    if user.get("rol") == "Administrador":
+        return True
+    
+    permisos_raw = user.get("permisos", "")
+    if "TODOS" in permisos_raw.upper():
+        return True
+
+    permisos_lista = [p.strip().lower() for p in permisos_raw.split(",") if p.strip()]
+    if nombre_modulo.strip().lower() not in permisos_lista:
+        st.error(f"⛔ **Acceso Restringido**: No tienes autorización para ingresar al módulo de **{nombre_modulo}**.")
+        st.info("Comunícate con el Administrador General para solicitar acceso a este módulo.")
+        st.stop()
+    return True
 
 # ==============================================================================
 # CONEXIÓN CON SUPABASE STORAGE
@@ -192,12 +230,7 @@ def query_db(query, params=(), commit=True):
         if "MIEMBROS" not in q_limpia and "AUDITORIA" not in q_limpia:
             pg_query += " RETURNING id"
 
-    params_limpios = []
-    for p in params:
-        if hasattr(p, "item"):
-            params_limpios.append(p.item())
-        else:
-            params_limpios.append(p)
+    params_limpios = [p.item() if hasattr(p, "item") else p for p in params]
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -232,26 +265,58 @@ def registrar_log(modulo, accion, descripcion):
     query_db("INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (%s, %s, %s, %s)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), modulo, accion, descripcion))
 
 # ==============================================================================
-# DISEÑO Y ESTILOS GLOBALES (BOTÓN DE MENÚ VISIBLE Y FLOTANTE)
+# DISEÑO Y ESTILOS GLOBALES (OCULTAMIENTO DE MÓDULOS EN LA BARRA LATERAL)
 # ==============================================================================
 def aplicar_estilos_base():
     verificar_licencia()
-    css_string = """
+
+    # Ocultar del menú lateral los módulos no autorizados para el usuario conectado
+    css_ocultar_paginas = ""
+    usuario_act = st.session_state.get("usuario_actual")
+    if usuario_act and usuario_act.get("rol") != "Administrador":
+        permisos_raw = usuario_act.get("permisos", "")
+        if "TODOS" not in permisos_raw.upper():
+            permisos_user = [p.strip().lower() for p in permisos_raw.split(",") if p.strip()]
+            
+            # Bloquear visualización de Panel Principal si no está permitido
+            if "panel principal" not in permisos_user:
+                css_ocultar_paginas += """
+                [data-testid="stSidebarNav"] li:has(a[href="/"]),
+                [data-testid="stSidebarNav"] li:has(a[href=""]),
+                [data-testid="stSidebarNav"] li:has(a[href*="inicio" i]),
+                [data-testid="stSidebarNav"] li:has(a[href*="panel" i]),
+                [data-testid="stSidebarNav"] li:has(a[href*="app" i]) {
+                    display: none !important;
+                }
+                """
+            
+            # Bloquear visualización de los demás módulos
+            for mod_nombre, keywords in MAPA_MODULOS_SIDEBAR.items():
+                if mod_nombre not in permisos_user:
+                    for kw in keywords:
+                        css_ocultar_paginas += f"""
+                        [data-testid="stSidebarNav"] li:has(a[href*="{kw}" i]),
+                        [data-testid="stSidebarNav"] a[href*="{kw}" i] {{
+                            display: none !important;
+                        }}
+                        """
+
+    css_string = f"""
 <style translate="no">
-#MainMenu { visibility: hidden !important; }
-footer { visibility: hidden !important; }
-.stDeployButton { display: none !important; }
+#MainMenu {{ visibility: hidden !important; }}
+footer {{ visibility: hidden !important; }}
+.stDeployButton {{ display: none !important; }}
 
 /* Mantener el header activo para dar soporte al botón de menú lateral */
-header[data-testid="stHeader"] {
+header[data-testid="stHeader"] {{
     background: transparent !important;
     display: flex !important;
     z-index: 100 !important;
-}
+}}
 
 /* BOTÓN FLOTANTE PERMANENTE PARA ABRIR / CERRAR MENÚ (EN PC Y MÓVIL) */
 [data-testid="collapsedControl"],
-[data-testid="stSidebarCollapsedControl"] {
+[data-testid="stSidebarCollapsedControl"] {{
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
@@ -266,59 +331,58 @@ header[data-testid="stHeader"] {
     padding: 6px 12px !important;
     box-shadow: 0 4px 14px rgba(15, 23, 42, 0.3) !important;
     cursor: pointer !important;
-}
+}}
 
 [data-testid="collapsedControl"] svg,
-[data-testid="stSidebarCollapsedControl"] svg {
+[data-testid="stSidebarCollapsedControl"] svg {{
     fill: #FFFFFF !important;
     stroke: #FFFFFF !important;
     width: 22px !important;
     height: 22px !important;
-}
+}}
 
-[data-testid="stSidebarCollapseButton"] {
+[data-testid="stSidebarCollapseButton"] {{
     display: flex !important;
     visibility: visible !important;
     color: #1E3A8A !important;
-}
+}}
 
 /* Barra lateral */
-[data-testid="stSidebar"] { 
+[data-testid="stSidebar"] {{ 
     background: #FFFFFF !important; 
     border-right: 1px solid #E2E8F0 !important; 
     box-shadow: 4px 0 15px rgba(15, 23, 42, 0.05) !important; 
-}
-[data-testid="stSidebarNav"] span { 
+}}
+[data-testid="stSidebarNav"] span {{ 
     font-size: 14px !important; 
     font-weight: 600 !important; 
     color: #334155 !important; 
-}
-[data-testid="stSidebarNav"] [aria-current="page"] { 
+}}
+[data-testid="stSidebarNav"] [aria-current="page"] {{ 
     background: linear-gradient(90deg, rgba(30, 64, 175, 0.1) 0%, transparent 100%) !important; 
     border-left: 4px solid #1E40AF !important; 
-}
-[data-testid="stSidebarNav"] [aria-current="page"] span { 
+}}
+[data-testid="stSidebarNav"] [aria-current="page"] span {{ 
     font-weight: 800 !important; 
     color: #1E40AF !important; 
-}
+}}
 
-html, body, [class*="css"], .stApp { 
+html, body, [class*="css"], .stApp {{ 
     font-family: 'Inter', -apple-system, sans-serif !important; 
     background: linear-gradient(135deg, #F8FAFC 0%, #E0E7FF 100%) !important; 
     color: #0F172A !important; 
     background-attachment: fixed !important; 
-}
+}}
 
-/* Opciones horizontales (st.radio) adaptables */
-div[data-testid="stRadio"] > div[role="radiogroup"] {
+div[data-testid="stRadio"] > div[role="radiogroup"] {{
     display: flex !important;
     flex-direction: row !important;
     flex-wrap: wrap !important;
     gap: 8px !important;
     width: 100% !important;
-}
+}}
 
-div[data-testid="stRadio"] > div[role="radiogroup"] > label {
+div[data-testid="stRadio"] > div[role="radiogroup"] > label {{
     background: #FFFFFF !important;
     border: 1.5px solid #CBD5E1 !important;
     border-radius: 10px !important;
@@ -327,55 +391,55 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label {
     flex: 1 1 auto !important;
     text-align: center !important;
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04) !important;
-}
+}}
 
-div[data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {
+div[data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {{
     display: none !important;
-}
+}}
 
-div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {{
     background: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%) !important;
     border-color: #1E3A8A !important;
     box-shadow: 0 4px 10px rgba(30, 58, 138, 0.3) !important;
-}
+}}
 
 div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p,
-div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) span {
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) span {{
     color: #FFFFFF !important;
     font-weight: 700 !important;
-}
+}}
 
-div[data-testid="stMetric"] { 
+div[data-testid="stMetric"] {{ 
     background: rgba(255, 255, 255, 0.85) !important; 
     backdrop-filter: blur(10px) !important; 
     border: 1px solid rgba(255, 255, 255, 0.4) !important; 
     border-radius: 16px !important; 
     padding: 16px 20px !important; 
     box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04) !important; 
-}
-div[data-testid="stMetricLabel"] p { 
+}}
+div[data-testid="stMetricLabel"] p {{ 
     font-size: 12px !important; 
     font-weight: 700 !important; 
     text-transform: uppercase !important; 
     color: #475569 !important; 
-}
-div[data-testid="stMetricValue"] { 
+}}
+div[data-testid="stMetricValue"] {{ 
     font-family: 'Plus Jakarta Sans', sans-serif !important; 
     font-size: 24px !important; 
     font-weight: 800 !important; 
     color: #0F172A !important; 
-}
+}}
 
-div[data-testid="stForm"], div[data-testid="stExpander"] { 
+div[data-testid="stForm"], div[data-testid="stExpander"] {{ 
     background: rgba(255, 255, 255, 0.9) !important; 
     backdrop-filter: blur(10px) !important; 
     border: 1px solid #E2E8F0 !important; 
     border-radius: 16px !important; 
     padding: 20px !important; 
     box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03) !important; 
-}
+}}
 
-button[kind="primary"] { 
+button[kind="primary"] {{ 
     background: linear-gradient(135deg, #1E40AF, #1E3A8A) !important; 
     border: none !important; 
     border-radius: 10px !important; 
@@ -384,21 +448,24 @@ button[kind="primary"] {
     padding: 10px 24px !important; 
     color: #FFFFFF !important; 
     box-shadow: 0 4px 10px rgba(30, 58, 138, 0.3) !important; 
-}
-button[kind="secondary"] { 
+}}
+button[kind="secondary"] {{ 
     border-radius: 10px !important; 
     font-weight: 600 !important; 
     border: 1px solid #CBD5E1 !important; 
     background: #FFFFFF !important; 
     color: #334155 !important; 
-}
+}}
 
-div[data-baseweb="input"] input, div[data-baseweb="select"] { 
+div[data-baseweb="input"] input, div[data-baseweb="select"] {{ 
     border-radius: 9px !important; 
     font-size: 13.5px !important; 
     border: 1px solid #E2E8F0 !important; 
     background: #FFFFFF !important; 
-}
+}}
+
+/* OCULTAMIENTO DINÁMICO DE PÁGINAS NO AUTORIZADAS */
+{css_ocultar_paginas}
 </style>
 """
     st.markdown(css_string, unsafe_allow_html=True)
