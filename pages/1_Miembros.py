@@ -1,4 +1,4 @@
-core.verificar_acceso_pagina("Panel Principal")
+core.verificar_acceso_pagina("Miembros")
 import streamlit as st
 import core
 import os
