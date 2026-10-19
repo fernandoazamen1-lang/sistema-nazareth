@@ -6,9 +6,10 @@ import numpy as np
 from datetime import date, datetime
 import plotly.graph_objects as go
 from reportlab.lib.pagesizes import landscape, letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
+from reportlab.graphics.shapes import Drawing, Rect, String, Line
 
 st.set_page_config(
     page_title="Tesorería y Movimientos", 
@@ -20,7 +21,7 @@ core.aplicar_estilos_base()
 
 st.subheader("🏛️ Libro de Tesorería y Movimientos")
 
-# Selector principal de puntos limpios (st.radio nativo)
+# Navegación limpia por puntos estándar
 opcion = st.radio(
     "Sección:", 
     ["Libro Detallado", "Evolución y Gráficos", "Registrar Movimiento", "⚙️ Modificar o Eliminar"], 
@@ -34,9 +35,22 @@ df_fondos = core.read_db("SELECT nombre FROM public.fondos_catalogo")
 fondos = df_fondos["nombre"].tolist() if not df_fondos.empty else ["General"]
 
 # ==============================================================================
-# GENERADORES DE REPORTES DINÁMICOS (PDF Y EXCEL)
+# MOTOR DE REPORTES PDF Y EXCEL DINÁMICOS
 # ==============================================================================
-def generar_pdf_libro_caja(df_reporte, tot_i, tot_e, saldo_n, filtros_txt=""):
+MAP_COLUMNAS_INFO = {
+    "Fecha": ("fecha", 60, 'CENTER'),
+    "Tipo": ("tipo", 45, 'CENTER'),
+    "Medio": ("medio", 75, 'CENTER'),
+    "Fondo": ("fondo", 55, 'CENTER'),
+    "Categoría": ("categoria", 85, 'LEFT'),
+    "Rubro": ("subcategoria", 85, 'LEFT'),
+    "Comprobante": ("comprobante", 75, 'CENTER'),
+    "Responsable": ("responsable", 80, 'LEFT'),
+    "Detalle": ("detalle", 140, 'LEFT'),
+    "Monto (S/.)": ("monto", 75, 'RIGHT'),
+}
+
+def generar_pdf_libro_caja_dinamico(df_reporte, cols_visibles, tot_i, tot_e, saldo_n, filtros_txt=""):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=25, rightMargin=25, topMargin=25, bottomMargin=25)
     elem = []
@@ -82,37 +96,58 @@ def generar_pdf_libro_caja(df_reporte, tot_i, tot_e, saldo_n, filtros_txt=""):
     ]))
     elem.extend([t_resumen, Spacer(1, 12)])
 
-    filas = [["FECHA", "TIPO", "MEDIO", "FONDO", "CATEGORÍA / RUBRO", "COMPROBANTE", "DETALLE", "MONTO"]]
+    # Cálculo dinámico de ancho de columnas para ocupar el ancho total imprimible (742 pt)
+    pesos_cols = [MAP_COLUMNAS_INFO[c][1] for c in cols_visibles]
+    suma_pesos = sum(pesos_cols) if pesos_cols else 1
+    col_widths = [int((p / suma_pesos) * 742) for p in pesos_cols]
+
+    filas = [cols_visibles]
     for _, r in df_reporte.iterrows():
-        filas.append([
-            str(r.get("fecha", ""))[:10],
-            str(r.get("tipo", "")),
-            str(r.get("medio", ""))[:14],
-            str(r.get("fondo", ""))[:10],
-            f"{r.get('categoria', '')} - {r.get('subcategoria', '')}"[:24],
-            str(r.get("comprobante", ""))[:12],
-            str(r.get("detalle", ""))[:32],
-            f"S/. {float(r.get('monto', 0)):,.2f}"
-        ])
+        fila_item = []
+        for c in cols_visibles:
+            col_key = MAP_COLUMNAS_INFO[c][0]
+            val = r.get(col_key, "")
+            if col_key == "monto":
+                fila_item.append(f"S/. {float(val):,.2f}")
+            elif col_key == "fecha":
+                fila_item.append(str(val)[:10])
+            else:
+                fila_item.append(str(val)[:30])
+        filas.append(fila_item)
 
-    filas.append(["", "", "", "", "", "", "SALDO NETO LISTADO:", f"S/. {saldo_n:,.2f}"])
+    # Fila final de totalización si la columna Monto está visible
+    if "Monto (S/.)" in cols_visibles:
+        idx_monto = cols_visibles.index("Monto (S/.)")
+        fila_total = ["" for _ in cols_visibles]
+        if idx_monto > 0:
+            fila_total[idx_monto - 1] = "SALDO NETO:"
+        else:
+            fila_total[0] = "TOTAL:"
+        fila_total[idx_monto] = f"S/. {saldo_n:,.2f}"
+        filas.append(fila_total)
 
-    t_tabla = Table(filas, colWidths=[55, 45, 75, 55, 125, 70, 235, 80])
-    t_tabla.setStyle(TableStyle([
-        ('GRID', (0,0), (-1,-2), 0.5, c_borde),
+    t_tabla = Table(filas, colWidths=col_widths)
+    t_style = [
+        ('GRID', (0,0), (-1,-1), 0.5, c_borde),
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#1E3A8A")),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,-1), 7.2),
-        ('ALIGN', (0,0), (3,-1), 'CENTER'),
-        ('ALIGN', (5,0), (5,-1), 'CENTER'),
-        ('ALIGN', (7,1), (7,-1), 'RIGHT'),
-        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#FEF08A")),
-        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-        ('GRID', (0,-1), (-1,-1), 1, colors.HexColor("#CA8A04")),
-        ('PADDING', (0,0), (-1,-1), 2.8)
-    ]))
-    elem.extend([t_tabla, Spacer(1, 28)])
+        ('PADDING', (0,0), (-1,-1), 3),
+    ]
+
+    for i, c in enumerate(cols_visibles):
+        t_style.append(('ALIGN', (i, 1), (i, -1), MAP_COLUMNAS_INFO[c][2]))
+
+    if "Monto (S/.)" in cols_visibles:
+        t_style.extend([
+            ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#FEF08A")),
+            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+            ('GRID', (0,-1), (-1,-1), 1, colors.HexColor("#CA8A04")),
+        ])
+
+    t_tabla.setStyle(TableStyle(t_style))
+    elem.extend([t_tabla, Spacer(1, 26)])
 
     t_firmas = Table([
         ["___________________________________", "___________________________________"],
@@ -130,31 +165,160 @@ def generar_pdf_libro_caja(df_reporte, tot_i, tot_e, saldo_n, filtros_txt=""):
     doc.build(elem)
     return buf.getvalue()
 
-def generar_excel_tesoreria(df_exp):
+def generar_excel_dinamico(df_exp, cols_visibles):
     output = io.BytesIO()
+    cols_map_db = {MAP_COLUMNAS_INFO[c][0]: c for c in cols_visibles}
+    cols_df = [c for c in cols_map_db.keys() if c in df_exp.columns]
+    df_descarga = df_exp[cols_df].rename(columns=cols_map_db)
+
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_exp.to_excel(writer, index=False, sheet_name="Libro_Caja_Filtrado")
+        df_descarga.to_excel(writer, index=False, sheet_name="Libro_Caja")
     return output.getvalue()
 
-def agregar_tendencia_lineal(fig, x_labels, y_vals, nombre_traza="Línea de Tendencia"):
+# ==============================================================================
+# MOTOR DE GRÁFICOS Y EXPORTACIÓN A PDF
+# ==============================================================================
+def calcular_tendencia_lineal(y_vals):
     y_arr = np.array(y_vals, dtype=float)
-    x_idx = np.arange(len(x_labels))
-    if np.any(y_arr > 0):
+    x_idx = np.arange(len(y_vals))
+    if np.any(y_arr != 0):
         try:
             coefs = np.polyfit(x_idx, y_arr, 1)
-            y_trend = np.polyval(coefs, x_idx)
-            fig.add_trace(go.Scatter(
-                x=x_labels, 
-                y=y_trend,
-                mode="lines",
-                name=nombre_traza,
-                line=dict(color="#F59E0B", width=2.5, dash="dash")
-            ))
+            return np.polyval(coefs, x_idx)
         except Exception:
             pass
+    return y_arr
+
+def agregar_tendencia_plotly(fig, x_labels, y_vals, nombre="Tendencia / Proyección"):
+    y_trend = calcular_tendencia_lineal(y_vals)
+    fig.add_trace(go.Scatter(
+        x=x_labels, 
+        y=y_trend,
+        mode="lines",
+        name=nombre,
+        line=dict(color="#F59E0B", width=2.5, dash="dash")
+    ))
+
+def dibujar_grafico_vectorial_pdf(titulo, x_labels, y_vals, color_hex, y_tendencia=None):
+    d = Drawing(740, 185)
+    d.add(Rect(0, 0, 740, 185, fillColor=colors.HexColor("#F8FAFC"), strokeColor=colors.HexColor("#CBD5E1"), strokeWidth=1, rx=6, ry=6))
+    d.add(String(20, 165, titulo, fontName="Helvetica-Bold", fontSize=10, fillColor=colors.HexColor("#0F172A")))
+
+    vals_abs = [abs(v) for v in y_vals]
+    max_val = max(vals_abs) if vals_abs and max(vals_abs) > 0 else 1.0
+
+    base_y = 38
+    chart_h = 100
+    bar_w = 30
+    spacing = 58
+    start_x = 42
+
+    d.add(Line(25, base_y, 715, base_y, strokeColor=colors.HexColor("#94A3B8"), strokeWidth=1))
+
+    pts_tendencia = []
+    for i, (mes, val) in enumerate(zip(x_labels, y_vals)):
+        bx = start_x + (i * spacing)
+        bh = (abs(val) / max_val) * chart_h
+        by = base_y if val >= 0 else base_y - bh
+        c_fill = colors.HexColor(color_hex) if val >= 0 else colors.HexColor("#DC2626")
+
+        d.add(Rect(bx, by, bar_w, max(bh, 1), fillColor=c_fill, strokeColor=None))
+
+        if abs(val) > 0:
+            d.add(String(bx - 3, by + bh + 3 if val >= 0 else by - 10, f"S/.{val:,.0f}", fontName="Helvetica-Bold", fontSize=6, fillColor=colors.HexColor("#334155")))
+        d.add(String(bx + 4, base_y - 12, mes[:3], fontName="Helvetica", fontSize=7, fillColor=colors.HexColor("#64748B")))
+
+        if y_tendencia is not None and len(y_tendencia) > i:
+            ty = base_y + ((y_tendencia[i] / max_val) * chart_h)
+            pts_tendencia.append((bx + bar_w / 2, ty))
+
+    for i in range(len(pts_tendencia) - 1):
+        d.add(Line(pts_tendencia[i][0], pts_tendencia[i][1], pts_tendencia[i+1][0], pts_tendencia[i+1][1], strokeColor=colors.HexColor("#F59E0B"), strokeWidth=2))
+
+    return d
+
+def render_chart_para_pdf(fig, titulo, x_labels, y_vals, color_hex, y_tendencia):
+    try:
+        img_bytes = fig.to_image(format="png", width=950, height=320, scale=2)
+        from reportlab.platypus import Image as RLImage
+        return RLImage(io.BytesIO(img_bytes), width=740, height=200)
+    except Exception:
+        return dibujar_grafico_vectorial_pdf(titulo, x_labels, y_vals, color_hex, y_tendencia)
+
+def generar_pdf_cuadros_graficos(anio_sel, medio_sel, fig1, fig2, fig3, fig4, y1, y2, y3, y4, tot_i, tot_e, tot_dz, sal_acum):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=25, rightMargin=25, topMargin=25, bottomMargin=25)
+    elem = []
+    c_prim = colors.HexColor("#1E3A8A")
+
+    # Encabezado institucional
+    t_head = Table([[
+        Paragraph(
+            "<b>IGLESIA EVANGÉLICA \"NAZARETH\" — ASAMBLEAS DE DIOS DEL PERÚ</b><br/>"
+            f"<font size=9 color='#1E3A8A'>INFORME ANUAL DE EVOLUCIÓN FINANCIERA Y PROYECCIONES: {anio_sel}</font><br/>"
+            f"<font size=8 color='#475569'>Filtro de Medio: {medio_sel}</font>",
+            ParagraphStyle('H1', fontName='Helvetica-Bold', fontSize=10.5, textColor=c_prim)
+        ),
+        Paragraph(
+            f"<b>Emisión:</b> {date.today().strftime('%d/%m/%Y')}<br/>"
+            f"<font size=8>Departamento de Tesorería</font>",
+            ParagraphStyle('H2', fontName='Helvetica', fontSize=8, alignment=2)
+        )
+    ]], colWidths=[540, 200])
+    t_head.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#EFF6FF")),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#1D4ED8")),
+        ('PADDING', (0,0), (-1,-1), 6)
+    ]))
+    elem.extend([t_head, Spacer(1, 8)])
+
+    # Tarjetas de resumen
+    t_kpis = Table([
+        ["TOTAL INGRESOS", "TOTAL EGRESOS", "TOTAL DIEZMOS", "SALDO REMANENTE ACUMULADO"],
+        [f"S/. {tot_i:,.2f}", f"S/. {tot_e:,.2f}", f"S/. {tot_dz:,.2f}", f"S/. {sal_acum:,.2f}"]
+    ], colWidths=[185, 185, 185, 187])
+    t_kpis.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#E2E8F0")),
+        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTSIZE', (0,0), (-1,0), 7.5),
+        ('FONTSIZE', (0,1), (-1,1), 10.5),
+        ('TEXTCOLOR', (0,1), (0,1), colors.HexColor("#166534")),
+        ('TEXTCOLOR', (1,1), (1,1), colors.HexColor("#991B1B")),
+        ('TEXTCOLOR', (2,1), (2,1), colors.HexColor("#4338CA")),
+        ('TEXTCOLOR', (3,1), (3,1), c_prim),
+        ('PADDING', (0,0), (-1,-1), 4)
+    ]))
+    elem.extend([t_kpis, Spacer(1, 10)])
+
+    # Página 1: Gráficos 1 y 2
+    g1_item = render_chart_para_pdf(fig1, f"1. EVOLUCIÓN MENSUAL DE INGRESOS ({anio_sel})", core.MESES, y1, "#10B981", calcular_tendencia_lineal(y1))
+    g2_item = render_chart_para_pdf(fig2, f"2. EVOLUCIÓN MENSUAL DE EGRESOS Y GASTOS ({anio_sel})", core.MESES, y2, "#EF4444", calcular_tendencia_lineal(y2))
+    elem.extend([g1_item, Spacer(1, 8), g2_item, PageBreak()])
+
+    # Página 2: Gráficos 3 y 4 + Firmas
+    g3_item = render_chart_para_pdf(fig3, f"3. EVOLUCIÓN HISTÓRICA DE DIEZMOS ({anio_sel})", core.MESES, y3, "#6366F1", calcular_tendencia_lineal(y3))
+    g4_item = render_chart_para_pdf(fig4, f"4. SALDOS NETOS REMANENTES POR MES ({anio_sel})", core.MESES, y4, "#1E3A8A", calcular_tendencia_lineal(y4))
+    
+    t_firmas = Table([
+        ["___________________________________", "___________________________________"],
+        ["TESORERÍA GENERAL", "PASTORADO PRINCIPAL"],
+        ["Iglesia Evangélica Nazareth", "Asambleas de Dios del Perú"]
+    ], colWidths=[370, 370])
+    t_firmas.setStyle(TableStyle([
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,1), (-1,1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('PADDING', (0,0), (-1,-1), 2)
+    ]))
+    elem.extend([g3_item, Spacer(1, 8), g4_item, Spacer(1, 14), t_firmas])
+
+    doc.build(elem)
+    return buf.getvalue()
 
 # ==============================================================================
-# 1. LIBRO DETALLADO CON FILTROS FLOTANTES Y DESCARGA DINÁMICA
+# 1. LIBRO DETALLADO CON FILTROS FLOTANTES Y SELECTOR DE COLUMNAS
 # ==============================================================================
 if opcion == "Libro Detallado":
     df_mov = core.read_db("SELECT * FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
@@ -166,8 +330,8 @@ if opcion == "Libro Detallado":
         df_mov["anio"] = df_mov["dt"].dt.year
         df_mov["mes_num"] = df_mov["dt"].dt.month
 
-        # PANEL FLOTANTE DE OPCIONES DE FILTRADO
-        with st.expander("🔎 Filtros Avanzados de Consulta y Descarga", expanded=True):
+        # PANEL FLOTANTE DE FILTRADO DE DATOS
+        with st.expander("🔎 Opciones de Filtrado de Movimientos (Filas)", expanded=True):
             f1, f2, f3, f4 = st.columns(4)
             with f1:
                 anios_disp = ["Todos"] + sorted([int(a) for a in df_mov["anio"].dropna().unique()], reverse=True)
@@ -175,9 +339,8 @@ if opcion == "Libro Detallado":
             with f2:
                 filtro_mes = st.selectbox("Mes:", ["Todos"] + core.MESES, index=0)
             with f3:
-                filtro_tipo = st.selectbox("Tipo de Movimiento:", ["Todos", "Ingreso", "Egreso"])
+                filtro_tipo = st.selectbox("Tipo:", ["Todos", "Ingreso", "Egreso"])
             with f4:
-                # FILTRO DE MEDIO SOLICITADO: EFECTIVO, BANCOS O AMBOS
                 filtro_medio = st.selectbox("Medio de Entrega:", ["Ambos (Todos)", "Efectivo", "Depósito / Transferencia (Bancos)"])
 
             f5, f6, f7 = st.columns([1.5, 1.5, 3])
@@ -189,7 +352,20 @@ if opcion == "Libro Detallado":
             with f7:
                 filtro_txt = st.text_input("Búsqueda Rápida:", placeholder="Buscar por detalle, comprobante o responsable...")
 
-        # Aplicación de los filtros
+        # SELECTOR FLOTANTE DE COLUMNAS A MOSTRAR Y DESCARGAR
+        with st.expander("👁️ Selector Flotante de Columnas Visibles (Agregar / Quitar según tu selección)", expanded=True):
+            todas_las_columnas = list(MAP_COLUMNAS_INFO.keys())
+            cols_seleccionadas = st.multiselect(
+                "Marca o desmarca las columnas que deseas visualizar y exportar:",
+                options=todas_las_columnas,
+                default=["Fecha", "Tipo", "Medio", "Fondo", "Categoría", "Rubro", "Comprobante", "Monto (S/.)"]
+            )
+
+        if not cols_seleccionadas:
+            st.warning("⚠️ Debes seleccionar al menos una columna para mostrar la tabla.")
+            cols_seleccionadas = ["Fecha", "Tipo", "Monto (S/.)"]
+
+        # Aplicar filtros de datos
         df_fil = df_mov.copy()
         filtros_activos = []
 
@@ -224,9 +400,9 @@ if opcion == "Libro Detallado":
             ]
             filtros_activos.append(f"Texto '{filtro_txt}'")
 
-        txt_filtros_resumen = ", ".join(filtros_activos) if filtros_activos else "Sin filtros (Total consolidado)"
+        txt_filtros_resumen = ", ".join(filtros_activos) if filtros_activos else "Todos los registros"
 
-        # Cálculos de totales con conversión estricta a float
+        # Totales numéricos exactos
         tot_ing = float(df_fil[df_fil["tipo"] == "Ingreso"]["monto"].sum()) if not df_fil.empty else 0.0
         tot_egr = float(df_fil[df_fil["tipo"] == "Egreso"]["monto"].sum()) if not df_fil.empty else 0.0
         saldo_neto = tot_ing - tot_egr
@@ -235,56 +411,56 @@ if opcion == "Libro Detallado":
         m1.metric("Ingresos Filtrados", f"S/. {tot_ing:,.2f}")
         m2.metric("Egresos Filtrados", f"S/. {tot_egr:,.2f}", delta=f"-S/. {tot_egr:,.2f}", delta_color="inverse")
         m3.metric("Saldo Neto", f"S/. {saldo_neto:,.2f}")
-        m4.metric("Registros Listados", f"{len(df_fil)} mov.")
+        m4.metric("Movimientos Listados", f"{len(df_fil)} reg.")
 
-        # BOTONES DE DESCARGA SEGÚN LO FILTRADO
-        col_pdf, col_xls, col_aviso = st.columns([2.5, 2.5, 4])
+        # BOTONES DE DESCARGA ADAPTADOS A LA VISTA FILTRADA
+        col_pdf, col_xls, col_info = st.columns([2.5, 2.5, 4])
         with col_pdf:
             if not df_fil.empty:
-                pdf_bytes = generar_pdf_libro_caja(df_fil, tot_ing, tot_egr, saldo_neto, txt_filtros_resumen)
+                pdf_bytes = generar_pdf_libro_caja_dinamico(df_fil, cols_seleccionadas, tot_ing, tot_egr, saldo_neto, txt_filtros_resumen)
                 st.download_button(
-                    label="📄 Descargar PDF (Vista Actual)",
+                    label="📄 Descargar PDF (Columnas y Filtros Actuales)",
                     data=pdf_bytes,
-                    file_name=f"Libro_Caja_Filtrado_{date.today()}.pdf",
+                    file_name=f"Libro_Caja_{date.today()}.pdf",
                     mime="application/pdf",
                     use_container_width=True
                 )
         with col_xls:
             if not df_fil.empty:
-                cols_para_excel = ["fecha", "tipo", "medio", "categoria", "subcategoria", "fondo", "monto", "comprobante", "responsable", "detalle"]
-                cols_presentes = [c for c in cols_para_excel if c in df_fil.columns]
-                excel_bytes = generar_excel_tesoreria(df_fil[cols_presentes])
+                excel_bytes = generar_excel_dinamico(df_fil, cols_seleccionadas)
                 st.download_button(
-                    label="📊 Descargar Excel (Vista Actual)",
+                    label="📊 Descargar Excel (Columnas y Filtros Actuales)",
                     data=excel_bytes,
-                    file_name=f"Libro_Caja_Filtrado_{date.today()}.xlsx",
+                    file_name=f"Libro_Caja_{date.today()}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary",
                     use_container_width=True
                 )
-        with col_aviso:
-            st.caption(f"Filtro activo: **{txt_filtros_resumen}**")
+        with col_info:
+            st.caption(f"Visualizando **{len(cols_seleccionadas)}** columnas seleccionadas.")
 
         st.markdown("---")
 
-        # Visualización de la tabla
-        map_cols = {
-            "fecha": "Fecha", "tipo": "Tipo", "medio": "Medio", "fondo": "Fondo",
-            "categoria": "Categoría", "subcategoria": "Rubro", "monto": "Monto (S/.)",
-            "comprobante": "Comprobante", "responsable": "Responsable", "detalle": "Detalle"
-        }
-        cols_mostrar = [c for c in map_cols.keys() if c in df_fil.columns]
+        # Tabla en pantalla según las columnas seleccionadas
+        cols_db_mostrar = [MAP_COLUMNAS_INFO[c][0] for c in cols_seleccionadas]
+        renombrar_dict = {MAP_COLUMNAS_INFO[c][0]: c for c in cols_seleccionadas}
+        df_mostrar = df_fil[cols_db_mostrar].rename(columns=renombrar_dict)
+
+        format_dict = {}
+        if "Monto (S/.)" in cols_seleccionadas:
+            format_dict["Monto (S/.)"] = "S/. {:,.2f}"
+
         st.dataframe(
-            df_fil[cols_mostrar].rename(columns=map_cols).style.format({"Monto (S/.)": "S/. {:,.2f}"}),
+            df_mostrar.style.format(format_dict),
             use_container_width=True,
             hide_index=True
         )
 
 # ==============================================================================
-# 2. EVOLUCIÓN Y 4 CUADROS GRÁFICOS CON PROYECCIONES
+# 2. EVOLUCIÓN Y 4 CUADROS GRÁFICOS CON DESCARGA EN PDF
 # ==============================================================================
 elif opcion == "Evolución y Gráficos":
-    df_mov = core.read_db("SELECT fecha, tipo, monto, medio, categoria, comprobante FROM public.movimientos WHERE comprobante NOT IN ('ASIENTO-APERTURA') AND fecha IS NOT NULL")
+    df_mov = core.read_db("SELECT fecha, tipo, monto, medio FROM public.movimientos WHERE comprobante NOT IN ('ASIENTO-APERTURA') AND fecha IS NOT NULL")
     
     if df_mov.empty:
         st.info("No hay suficientes registros para proyectar gráficas estadísticas.")
@@ -297,16 +473,14 @@ elif opcion == "Evolución y Gráficos":
 
         anios_graf = sorted(list(df_mov["Anio"].unique()), reverse=True)
         
-        # Filtro de cabecera para los gráficos
         c_g1, c_g2 = st.columns([2, 2])
         with c_g1:
-            anio_graf = st.selectbox("Año a Graficar:", anios_disp := anios_graf, index=0)
+            anio_graf = st.selectbox("Año a Graficar:", anios_graf, index=0)
         with c_g2:
             filtro_medio_graf = st.selectbox("Medio de Pago para Ingresos y Egresos:", ["Ambos (Efectivo y Bancos)", "Solo Efectivo", "Solo Depósito / Transferencia (Bancos)"])
 
         df_anio = df_mov[df_mov["Anio"] == anio_graf].copy()
 
-        # Filtrado de medio si corresponde
         if filtro_medio_graf == "Solo Efectivo":
             df_anio_medio = df_anio[df_anio["medio"] == "Efectivo"]
         elif filtro_medio_graf == "Solo Depósito / Transferencia (Bancos)":
@@ -314,108 +488,131 @@ elif opcion == "Evolución y Gráficos":
         else:
             df_anio_medio = df_anio
 
-        # Tabulación mensual
         pivot_m = df_anio_medio.pivot_table(index="Mes", columns="tipo", values="monto", aggfunc="sum", fill_value=0.0).reindex(core.MESES).fillna(0.0)
         if "Ingreso" not in pivot_m.columns: pivot_m["Ingreso"] = 0.0
         if "Egreso" not in pivot_m.columns: pivot_m["Egreso"] = 0.0
         pivot_m["Saldo"] = pivot_m["Ingreso"] - pivot_m["Egreso"]
 
+        y_ingresos = pivot_m["Ingreso"].values
+        y_egresos = pivot_m["Egreso"].values
+        y_saldos = pivot_m["Saldo"].values
+
         # ----------------------------------------------------------------------
-        # CUADRO 1: SOLO INGRESOS + TENDENCIA DE PROYECCIÓN
+        # CUADRO 1: SOLO INGRESOS
         # ----------------------------------------------------------------------
-        st.markdown("#### 1. Evolución Mensual de Ingresos")
         fig_ing = go.Figure()
         fig_ing.add_trace(go.Bar(
             name="Ingresos Mensuales", 
             x=core.MESES, 
-            y=pivot_m["Ingreso"],
+            y=y_ingresos,
             marker_color="#10B981", 
             text=pivot_m["Ingreso"].apply(lambda v: f"S/. {v:,.0f}" if v > 0 else ""),
             textposition="auto"
         ))
-        agregar_tendencia_lineal(fig_ing, core.MESES, pivot_m["Ingreso"].values, "Proyección / Tendencia Ingresos")
+        agregar_tendencia_plotly(fig_ing, core.MESES, y_ingresos, "Proyección / Tendencia Ingresos")
         fig_ing.update_layout(
-            title=f"Ingresos Mensuales ({anio_graf}) — {filtro_medio_graf}",
-            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=390,
+            title=f"1. Ingresos Mensuales ({anio_graf}) — {filtro_medio_graf}",
+            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=370,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig_ing, use_container_width=True)
 
         # ----------------------------------------------------------------------
-        # CUADRO 2: SOLO EGRESOS + TENDENCIA DE PROYECCIÓN
+        # CUADRO 2: SOLO EGRESOS
         # ----------------------------------------------------------------------
-        st.markdown("#### 2. Evolución Mensual de Egresos y Gastos")
         fig_egr = go.Figure()
         fig_egr.add_trace(go.Bar(
             name="Egresos Mensuales", 
             x=core.MESES, 
-            y=pivot_m["Egreso"],
+            y=y_egresos,
             marker_color="#EF4444", 
             text=pivot_m["Egreso"].apply(lambda v: f"S/. {v:,.0f}" if v > 0 else ""),
             textposition="auto"
         ))
-        agregar_tendencia_lineal(fig_egr, core.MESES, pivot_m["Egreso"].values, "Proyección / Tendencia Gastos")
+        agregar_tendencia_plotly(fig_egr, core.MESES, y_egresos, "Proyección / Tendencia Gastos")
         fig_egr.update_layout(
-            title=f"Egresos y Gastos Mensuales ({anio_graf}) — {filtro_medio_graf}",
-            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=390,
+            title=f"2. Egresos y Gastos Mensuales ({anio_graf}) — {filtro_medio_graf}",
+            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=370,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig_egr, use_container_width=True)
 
         # ----------------------------------------------------------------------
-        # CUADRO 3: EVOLUCIÓN DE LOS DIEZMOS + TENDENCIA DE PROYECCIÓN
+        # CUADRO 3: EVOLUCIÓN DE DIEZMOS
         # ----------------------------------------------------------------------
-        st.markdown("#### 3. Evolución Histórica de Diezmos")
-        # Leer aportes directamente de diezmos
-        df_diezmos_bd = core.read_db("SELECT fecha, monto FROM public.diezmos WHERE fecha IS NOT NULL")
-        if not df_diezmos_bd.empty:
-            df_diezmos_bd["dt"] = pd.to_datetime(df_diezmos_bd["fecha"], errors="coerce")
-            df_diezmos_bd = df_diezmos_bd.dropna(subset=["dt"])
-            df_dz_anio = df_diezmos_bd[df_diezmos_bd["dt"].dt.year == anio_graf].copy()
+        df_dz_bd = core.read_db("SELECT fecha, monto FROM public.diezmos WHERE fecha IS NOT NULL")
+        if not df_dz_bd.empty:
+            df_dz_bd["dt"] = pd.to_datetime(df_dz_bd["fecha"], errors="coerce")
+            df_dz_bd = df_dz_bd.dropna(subset=["dt"])
+            df_dz_anio = df_dz_bd[df_dz_bd["dt"].dt.year == anio_graf].copy()
             df_dz_anio["Mes"] = df_dz_anio["dt"].dt.month.map(core.MESES_NOMBRES)
-            diezmos_mes = df_dz_anio.groupby("Mes")["monto"].sum().reindex(core.MESES).fillna(0.0)
+            s_dz = df_dz_anio.groupby("Mes")["monto"].sum().reindex(core.MESES).fillna(0.0)
+            y_diezmos = s_dz.values
         else:
-            diezmos_mes = pd.Series(0.0, index=core.MESES)
+            y_diezmos = np.zeros(12)
 
         fig_dz = go.Figure()
         fig_dz.add_trace(go.Bar(
             name="Diezmos Recaudados",
             x=core.MESES,
-            y=diezmos_mes.values,
+            y=y_diezmos,
             marker_color="#6366F1",
-            text=[f"S/. {v:,.0f}" if v > 0 else "" for v in diezmos_mes.values],
+            text=[f"S/. {v:,.0f}" if v > 0 else "" for v in y_diezmos],
             textposition="auto"
         ))
-        agregar_tendencia_lineal(fig_dz, core.MESES, diezmos_mes.values, "Proyección de Fidelidad / Diezmos")
+        agregar_tendencia_plotly(fig_dz, core.MESES, y_diezmos, "Proyección de Fidelidad / Diezmos")
         fig_dz.update_layout(
-            title=f"Comportamiento de Diezmos ({anio_graf})",
-            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=390,
+            title=f"3. Comportamiento de Diezmos ({anio_graf})",
+            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=370,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig_dz, use_container_width=True)
 
         # ----------------------------------------------------------------------
-        # CUADRO 4: SALDOS QUE QUEDAN POR MES + TENDENCIA DE PROYECCIÓN
+        # CUADRO 4: SALDOS QUE QUEDAN POR MES
         # ----------------------------------------------------------------------
-        st.markdown("#### 4. Saldos Netos Remanentes por Mes (Superávit / Déficit)")
-        colores_saldo = ["#1E3A8A" if s >= 0 else "#DC2626" for s in pivot_m["Saldo"].values]
-        
+        colores_sal = ["#1E3A8A" if s >= 0 else "#DC2626" for s in y_saldos]
         fig_sal = go.Figure()
         fig_sal.add_trace(go.Bar(
             name="Saldo Neto del Mes",
             x=core.MESES,
-            y=pivot_m["Saldo"],
-            marker_color=colores_saldo,
+            y=y_saldos,
+            marker_color=colores_sal,
             text=pivot_m["Saldo"].apply(lambda v: f"S/. {v:,.0f}" if v != 0 else ""),
             textposition="auto"
         ))
-        agregar_tendencia_lineal(fig_sal, core.MESES, pivot_m["Saldo"].values, "Tendencia de Superávit / Capacidad de Ahorro")
+        agregar_tendencia_plotly(fig_sal, core.MESES, y_saldos, "Tendencia de Superávit")
         fig_sal.update_layout(
-            title=f"Saldos Netos por Periodo ({anio_graf})",
-            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=390,
+            title=f"4. Saldos Netos por Periodo ({anio_graf})",
+            xaxis_title="Mes", yaxis_title="Monto (S/.)", height=370,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig_sal, use_container_width=True)
+
+        # BOTÓN DE DESCARGA DEL PDF DE TODOS LOS GRÁFICOS
+        st.markdown("---")
+        tot_i_graf = float(np.sum(y_ingresos))
+        tot_e_graf = float(np.sum(y_egresos))
+        tot_dz_graf = float(np.sum(y_diezmos))
+        sal_acum_graf = tot_i_graf - tot_e_graf
+
+        pdf_graficos_bytes = generar_pdf_cuadros_graficos(
+            anio_graf, filtro_medio_graf, 
+            fig_ing, fig_egr, fig_dz, fig_sal,
+            y_ingresos, y_egresos, y_diezmos, y_saldos,
+            tot_i_graf, tot_e_graf, tot_dz_graf, sal_acum_graf
+        )
+
+        col_b_g, _ = st.columns([3, 4])
+        with col_b_g:
+            st.download_button(
+                label=f"📄 Descargar los 4 Gráficos y Proyecciones en PDF ({anio_graf})",
+                data=pdf_graficos_bytes,
+                file_name=f"Reporte_Graficos_Tesoreria_{anio_graf}.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
 
 # ==============================================================================
 # 3. REGISTRAR MOVIMIENTO MANUAL
