@@ -1,4 +1,3 @@
-core.verificar_acceso_pagina("Foro / Recordatorios")
 import streamlit as st
 import core
 from datetime import date
