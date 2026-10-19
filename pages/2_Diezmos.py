@@ -1,4 +1,3 @@
-core.verificar_acceso_pagina("Diezmos")
 import streamlit as st
 import core
 import reportlab
