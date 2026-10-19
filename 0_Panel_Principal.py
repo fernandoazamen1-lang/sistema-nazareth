@@ -1,4 +1,3 @@
-core.verificar_acceso_pagina("Panel Principal")
 import streamlit as st
 import core
 import io
@@ -15,6 +14,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 
+# 1. Configuración de página (debe ser la primera orden de Streamlit)
 st.set_page_config(
     page_title="Tablero Ejecutivo y Financiero - Iglesia Nazareth", 
     page_icon="⛪", 
@@ -22,42 +22,46 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 1. BLOQUEAR ACCESO SI NO HAY LOGIN
-core.requerir_login()
+# 2. Bloquear si no hay login y verificar si tiene permiso a este módulo
+core.verificar_acceso_pagina("Panel Principal")
 
-# 2. Estilos visuales y banner institucional (UNA SOLA VEZ)
+# 3. Estilos visuales y banner institucional
 core.aplicar_estilos_base()
 
 # ==============================================================================
 # CARGA Y NORMALIZACIÓN DE DATOS
 # ==============================================================================
 try:
-    df_mov = core.read_db("SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, estado_credito FROM movimientos WHERE comprobante != 'ASIENTO-APERTURA'")
+    df_mov = core.read_db("""
+        SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, estado_credito 
+        FROM public.movimientos 
+        WHERE comprobante NOT LIKE 'ASIENTO-APERTURA%'
+    """)
 except Exception:
     df_mov = pd.DataFrame()
 
 try:
-    df_dz = core.read_db("SELECT id, fecha, id_miembro, nombre_miembro, mes, medio, monto FROM diezmos")
+    df_dz = core.read_db("SELECT id, fecha, id_miembro, nombre_miembro, mes, medio, monto FROM public.diezmos")
 except Exception:
     df_dz = pd.DataFrame()
 
 try:
-    df_act_mov = core.read_db("SELECT id, id_actividad, fecha, tipo, concepto, monto, condicion, cliente_deudor, estado_cobro, medio, fondo_destino, liquidado FROM actividad_movimientos")
+    df_act_mov = core.read_db("SELECT id, id_actividad, fecha, tipo, concepto, monto, condicion, cliente_deudor, estado_cobro, medio, fondo_destino, liquidado FROM public.actividad_movimientos")
 except Exception:
     df_act_mov = pd.DataFrame()
 
 try:
-    df_act = core.read_db("SELECT id, nombre, fecha, responsable, estado FROM actividades")
+    df_act = core.read_db("SELECT id, nombre, fecha, responsable, estado FROM public.actividades")
 except Exception:
     df_act = pd.DataFrame()
 
 try:
-    df_miembros = core.read_db("SELECT id_miembro, nombre FROM miembros")
+    df_miembros = core.read_db("SELECT id_miembro, nombre FROM public.miembros")
 except Exception:
     df_miembros = pd.DataFrame()
 
 try:
-    df_fondos = core.read_db("SELECT nombre FROM fondos_catalogo")
+    df_fondos = core.read_db("SELECT nombre FROM public.fondos_catalogo")
     fondos_list = df_fondos["nombre"].tolist() if not df_fondos.empty else ["General"]
 except Exception:
     fondos_list = ["General"]
@@ -65,7 +69,7 @@ except Exception:
 # Identidad institucional
 def get_cfg(k, d=""):
     try:
-        df_c = core.read_db("SELECT valor FROM config_iglesia WHERE clave=?", (k,))
+        df_c = core.read_db("SELECT valor FROM public.config_iglesia WHERE clave=?", (k,))
         return df_c.iloc[0]["valor"] if not df_c.empty else d
     except Exception:
         return d
@@ -80,15 +84,15 @@ tiene_asientos_dz = not df_mov[df_mov["comprobante"].str.startswith("ASIENTO-DZ-
 
 if tiene_asientos_dz:
     mov_disp = df_mov[df_mov["estado_credito"] != "A Credito"].copy() if not df_mov.empty else pd.DataFrame()
-    ing_efe = mov_disp[(mov_disp["tipo"] == "Ingreso") & (mov_disp["medio"] == "Efectivo")]["monto"].sum() if not mov_disp.empty else 0.0
-    ing_ban = mov_disp[(mov_disp["tipo"] == "Ingreso") & (mov_disp["medio"] != "Efectivo")]["monto"].sum() if not mov_disp.empty else 0.0
+    ing_efe = float(mov_disp[(mov_disp["tipo"] == "Ingreso") & (mov_disp["medio"] == "Efectivo")]["monto"].sum()) if not mov_disp.empty else 0.0
+    ing_ban = float(mov_disp[(mov_disp["tipo"] == "Ingreso") & (mov_disp["medio"] != "Efectivo")]["monto"].sum()) if not mov_disp.empty else 0.0
 else:
     mov_disp = df_mov[df_mov["estado_credito"] != "A Credito"].copy() if not df_mov.empty else pd.DataFrame()
-    ing_efe = (mov_disp[(mov_disp["tipo"] == "Ingreso") & (mov_disp["medio"] == "Efectivo")]["monto"].sum() if not mov_disp.empty else 0.0) + (df_dz[df_dz["medio"] == "Efectivo"]["monto"].sum() if not df_dz.empty else 0.0)
-    ing_ban = (mov_disp[(mov_disp["tipo"] == "Ingreso") & (mov_disp["medio"] != "Efectivo")]["monto"].sum() if not mov_disp.empty else 0.0) + (df_dz[df_dz["medio"] != "Efectivo"]["monto"].sum() if not df_dz.empty else 0.0)
+    ing_efe = (float(mov_disp[(mov_disp["tipo"] == "Ingreso") & (mov_disp["medio"] == "Efectivo")]["monto"].sum()) if not mov_disp.empty else 0.0) + (float(df_dz[df_dz["medio"] == "Efectivo"]["monto"].sum()) if not df_dz.empty else 0.0)
+    ing_ban = (float(mov_disp[(mov_disp["tipo"] == "Ingreso") & (mov_disp["medio"] != "Efectivo")]["monto"].sum()) if not mov_disp.empty else 0.0) + (float(df_dz[df_dz["medio"] != "Efectivo"]["monto"].sum()) if not df_dz.empty else 0.0)
 
-egr_efe = mov_disp[(mov_disp["tipo"] == "Egreso") & (mov_disp["medio"] == "Efectivo")]["monto"].sum() if not mov_disp.empty else 0.0
-egr_ban = mov_disp[(mov_disp["tipo"] == "Egreso") & (mov_disp["medio"] != "Efectivo")]["monto"].sum() if not mov_disp.empty else 0.0
+egr_efe = float(mov_disp[(mov_disp["tipo"] == "Egreso") & (mov_disp["medio"] == "Efectivo")]["monto"].sum()) if not mov_disp.empty else 0.0
+egr_ban = float(mov_disp[(mov_disp["tipo"] == "Egreso") & (mov_disp["medio"] != "Efectivo")]["monto"].sum()) if not mov_disp.empty else 0.0
 
 saldo_caja = ing_efe - egr_efe
 saldo_banco = ing_ban - egr_ban
@@ -117,21 +121,21 @@ df_act_corte = df_act_mov[df_act_mov["fecha"] <= fecha_corte_str].copy() if not 
 # 1. Fondos restringidos
 fondos_saldos_corte = {}
 for fn in fondos_list:
-    i_fn = df_mov_corte[(df_mov_corte["fondo"] == fn) & (df_mov_corte["tipo"] == "Ingreso")]["monto"].sum() if not df_mov_corte.empty else 0.0
-    e_fn = df_mov_corte[(df_mov_corte["fondo"] == fn) & (df_mov_corte["tipo"] == "Egreso")]["monto"].sum() if not df_mov_corte.empty else 0.0
+    i_fn = float(df_mov_corte[(df_mov_corte["fondo"] == fn) & (df_mov_corte["tipo"] == "Ingreso")]["monto"].sum()) if not df_mov_corte.empty else 0.0
+    e_fn = float(df_mov_corte[(df_mov_corte["fondo"] == fn) & (df_mov_corte["tipo"] == "Egreso")]["monto"].sum()) if not df_mov_corte.empty else 0.0
     fondos_saldos_corte[fn] = i_fn - e_fn
 
 efectivo_libre_operativo = max(fondos_saldos_corte.get("General", 0.0), 0.0)
 efectivo_no_disponible = sum([saldo for fn, saldo in fondos_saldos_corte.items() if fn != "General" and saldo > 0])
 
 # 2. Cuentas por cobrar / Deudas pendientes
-cred_tesoreria = df_mov_corte[(df_mov_corte["tipo"] == "Ingreso") & (df_mov_corte["estado_credito"] == "A Credito")]["monto"].sum() if not df_mov_corte.empty else 0.0
-deuda_actividades = df_act_corte[(df_act_corte["condicion"] == "Credito") & (df_act_corte["estado_cobro"] == "Pendiente")]["monto"].sum() if not df_act_corte.empty else 0.0
+cred_tesoreria = float(df_mov_corte[(df_mov_corte["tipo"] == "Ingreso") & (df_mov_corte["estado_credito"] == "A Credito")]["monto"].sum()) if not df_mov_corte.empty else 0.0
+deuda_actividades = float(df_act_corte[(df_act_corte["condicion"] == "Credito") & (df_act_corte["estado_cobro"] == "Pendiente")]["monto"].sum()) if not df_act_corte.empty else 0.0
 total_adeudos = cred_tesoreria + deuda_actividades
 
 # 3. Resumen de Actividades hasta la fecha de corte
-ing_act_cobradas = df_act_corte[(df_act_corte["tipo"] == "Ingreso") & (df_act_corte["estado_cobro"] != "Pendiente")]["monto"].sum() if not df_act_corte.empty else 0.0
-egr_act_ejecutadas = df_act_corte[df_act_corte["tipo"] == "Egreso"]["monto"].sum() if not df_act_corte.empty else 0.0
+ing_act_cobradas = float(df_act_corte[(df_act_corte["tipo"] == "Ingreso") & (df_act_corte["estado_cobro"] != "Pendiente")]["monto"].sum()) if not df_act_corte.empty else 0.0
+egr_act_ejecutadas = float(df_act_corte[df_act_corte["tipo"] == "Egreso"]["monto"].sum()) if not df_act_corte.empty else 0.0
 utilidad_neta_act = ing_act_cobradas - egr_act_ejecutadas
 
 # ==============================================================================
@@ -170,7 +174,7 @@ st.markdown("---")
 # ==============================================================================
 # 2. AUDITORÍA FINANCIERA DE ACTIVIDADES
 # ==============================================================================
-st.markdown(f"#### 🎯 Rendición Financiera de Actividades Eclesiásticas")
+st.markdown("#### 🎯 Rendición Financiera de Actividades Eclesiásticas")
 
 act1, act2, act3, act4 = st.columns(4)
 act1.metric("Ingresos Cobrados", f"S/. {ing_act_cobradas:,.2f}")
@@ -232,22 +236,22 @@ if not df_dz.empty and "fecha" in df_dz.columns:
     df_dz_analisis = df_dz_analisis.sort_values("periodo", ascending=False)
 
 dz_mes_actual = df_dz_analisis[df_dz_analisis["periodo"] == periodo_actual_str] if not df_dz_analisis.empty else pd.DataFrame()
-rec_mes = dz_mes_actual.iloc[0]["total_recaudado"] if not dz_mes_actual.empty else 0.0
+rec_mes = float(dz_mes_actual.iloc[0]["total_recaudado"]) if not dz_mes_actual.empty else 0.0
 diez_mes = int(dz_mes_actual.iloc[0]["cant_diezmantes"]) if not dz_mes_actual.empty else 0
-ticket_mes = dz_mes_actual.iloc[0]["ticket_promedio"] if not dz_mes_actual.empty else 0.0
+ticket_mes = float(dz_mes_actual.iloc[0]["ticket_promedio"]) if not dz_mes_actual.empty else 0.0
 total_padron = len(df_miembros)
 cobertura_padron = (diez_mes / total_padron * 100) if total_padron > 0 else 0.0
 
 d1, d2, d3, d4 = st.columns(4)
 d1.metric(f"Recaudación ({mes_sel})", f"S/. {rec_mes:,.2f}")
 d2.metric(f"Hermanos Diezmantes ({mes_sel})", f"{diez_mes} personas", help=f"Miembros con al menos 1 aporte en {mes_sel}")
-d3.metric(f"Aporte Promedio / Hermano", f"S/. {ticket_mes:,.2f}")
-d4.metric(f"Cobertura sobre el Padrón", f"{cobertura_padron:.1f}%", help=f"Representa {diez_mes} de {total_padron} miembros registrados")
+d3.metric("Aporte Promedio / Hermano", f"S/. {ticket_mes:,.2f}")
+d4.metric("Cobertura sobre el Padrón", f"{cobertura_padron:.1f}%", help=f"Representa {diez_mes} de {total_padron} miembros registrados")
 
 st.markdown("---")
 
 # ==============================================================================
-# 4. GENERADOR DE REPORTES: EXCEL MULTI-HOJA Y PDF CON ANÁLISIS FINANCIERO
+# 4. GENERADOR DE REPORTES: EXCEL MULTI-HOJA Y PDF
 # ==============================================================================
 st.markdown("#### 📂 Generador de Informes Oficiales del Periodo")
 st.caption(f"Genera la rendición completa para **{mes_sel} {anio_sel}** con balance de liquidez, adeudos y actividades.")
@@ -257,8 +261,8 @@ if not df_mov.empty and "fecha" in df_mov.columns:
     df_mov["dt"] = pd.to_datetime(df_mov["fecha"], errors="coerce")
     df_mov_mes = df_mov[(df_mov["dt"].dt.year == anio_sel) & (df_mov["dt"].dt.month == num_m_sel)].copy()
 
-ing_periodo = df_mov_mes[df_mov_mes["tipo"] == "Ingreso"]["monto"].sum() if not df_mov_mes.empty else 0.0
-egr_periodo = df_mov_mes[df_mov_mes["tipo"] == "Egreso"]["monto"].sum() if not df_mov_mes.empty else 0.0
+ing_periodo = float(df_mov_mes[df_mov_mes["tipo"] == "Ingreso"]["monto"].sum()) if not df_mov_mes.empty else 0.0
+egr_periodo = float(df_mov_mes[df_mov_mes["tipo"] == "Egreso"]["monto"].sum()) if not df_mov_mes.empty else 0.0
 superavit_periodo = ing_periodo - egr_periodo
 
 def generar_excel_integral():
@@ -295,8 +299,8 @@ def generar_excel_integral():
 
         saldos_fondos_data = []
         for fn in fondos_list:
-            i_f = df_mov_corte[(df_mov_corte["fondo"] == fn) & (df_mov_corte["tipo"] == "Ingreso")]["monto"].sum() if not df_mov_corte.empty else 0.0
-            e_f = df_mov_corte[(df_mov_corte["fondo"] == fn) & (df_mov_corte["tipo"] == "Egreso")]["monto"].sum() if not df_mov_corte.empty else 0.0
+            i_f = float(df_mov_corte[(df_mov_corte["fondo"] == fn) & (df_mov_corte["tipo"] == "Ingreso")]["monto"].sum()) if not df_mov_corte.empty else 0.0
+            e_f = float(df_mov_corte[(df_mov_corte["fondo"] == fn) & (df_mov_corte["tipo"] == "Egreso")]["monto"].sum()) if not df_mov_corte.empty else 0.0
             saldos_fondos_data.append({
                 "Fondo": fn, 
                 "Condición": "Libre Disponibilidad" if fn == "General" else "Fondo Restringido",
@@ -427,26 +431,26 @@ with col_btn1:
     try:
         excel_bytes = generar_excel_integral()
         st.download_button(
-            label=f"📊 Descargar Análisis Completo en Excel (.xlsx)",
+            label="📊 Descargar Análisis Completo en Excel (.xlsx)",
             data=excel_bytes,
             file_name=f"Analisis_Financiero_Nazareth_{periodo_actual_str}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
-    except Exception as e:
+    except Exception:
         st.caption("Excel no disponible temporalmente.")
 
 with col_btn2:
     try:
         pdf_bytes = generar_pdf_gerencial()
         st.download_button(
-            label=f"📄 Descargar Informe Mensual con Dictamen en PDF",
+            label="📄 Descargar Informe Mensual con Dictamen en PDF",
             data=pdf_bytes,
             file_name=f"Informe_Financiero_Nazareth_{periodo_actual_str}.pdf",
             mime="application/pdf",
             type="secondary"
         )
-    except Exception as e:
+    except Exception:
         st.caption("PDF no disponible temporalmente.")
 
 st.markdown("---")
@@ -465,7 +469,7 @@ for idx, f_nom in enumerate(fondos_list[:5]):
 # ==============================================================================
 st.markdown("##### 📋 Últimas Transacciones Registradas en Tesorería")
 try:
-    df_recientes = core.read_db("SELECT fecha, tipo, categoria, fondo, monto, medio, comprobante, detalle FROM movimientos ORDER BY date(fecha) DESC, id DESC LIMIT 8")
+    df_recientes = core.read_db("SELECT fecha, tipo, categoria, fondo, monto, medio, comprobante, detalle FROM public.movimientos ORDER BY date(fecha) DESC, id DESC LIMIT 8")
 except Exception:
     df_recientes = pd.DataFrame()
 
