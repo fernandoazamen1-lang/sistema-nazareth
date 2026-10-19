@@ -10,8 +10,15 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 
-st.set_page_config(page_title="Módulo de Diezmos", page_icon="📖", layout="wide")
-core.requerir_login()
+# 1. Configuración de página (primera orden de Streamlit)
+st.set_page_config(
+    page_title="Módulo de Diezmos", 
+    page_icon="📖", 
+    layout="wide"
+)
+
+# 2. Verificación de permisos y estilos visuales
+core.verificar_acceso_pagina("Diezmos")
 core.aplicar_estilos_base()
 
 # Asegurar tablas requeridas y columnas en public (PostgreSQL)
@@ -35,6 +42,18 @@ try:
                     estado_credito TEXT DEFAULT 'Cobrado',
                     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS public.diezmos (
+                    id SERIAL PRIMARY KEY,
+                    fecha DATE NOT NULL,
+                    id_miembro TEXT NOT NULL,
+                    nombre_miembro TEXT NOT NULL,
+                    mes TEXT NOT NULL,
+                    medio TEXT DEFAULT 'Efectivo',
+                    monto NUMERIC(12, 2) NOT NULL,
+                    detalle TEXT DEFAULT '',
+                    codigo_comprobante TEXT DEFAULT '',
+                    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
                 ALTER TABLE public.diezmos ADD COLUMN IF NOT EXISTS codigo_comprobante TEXT DEFAULT '';
             """)
         conn.commit()
@@ -51,12 +70,11 @@ tesorero_def = df_t.iloc[0]["descripcion"] if not df_t.empty else "Tesorero Gene
 
 # ==============================================================================
 # MOTOR TIPOGRÁFICO UNICODE GARANTIZADO (Ñ, TILDES, SIGNOS)
-# Usa las fuentes TrueType físicas incluidas en el paquete ReportLab del servidor
 # ==============================================================================
 def get_font(size, bold=False):
     """
     Carga la fuente TrueType 'Bitstream Vera' incluida directamente en ReportLab.
-    Garantiza soporte completo para Ñ, tildes, signos y símbolos sin depender de descargas.
+    Garantiza soporte completo para Ñ, tildes y signos sin depender de descargas externas.
     """
     try:
         dir_rl = os.path.dirname(reportlab.__file__)
@@ -107,7 +125,7 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     draw_center(dr, 85, "ASAMBLEAS DE DIOS DEL PERÚ  •  DEPARTAMENTO DE TESORERÍA", get_font(13, True), "#93C5FD", w)
     draw_center(dr, 120, f"CONSTANCIA DE DIEZMO:  {serie}", get_font(17, True), "#FDE047", w)
 
-    # 3. Datos del hermano
+    # 3. Datos del aportante
     dr.rounded_rectangle([(42, 185), (w - 42, 475)], 12, fill="#FFFFFF", outline="#E2E8F0", width=1)
     rows = [
         ("Hermano(a) Aportante:", str(nombre).strip().upper()[:36]),
@@ -152,7 +170,6 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
-# --- UTILITARIOS DE DIEZMOS ---
 def get_diezmos():
     df = core.read_db("SELECT * FROM public.diezmos ORDER BY id DESC")
     if not df.empty:
@@ -175,7 +192,7 @@ def proximo_codigo():
     return f"D - {int(cant) + 1:05d}"
 
 # ==============================================================================
-# FLUJO EN 2 CLICS: DESCARGAR IMAGEN + ABRIR WHATSAPP
+# FLUJO DE ENVÍO Y DESCARGA DE VOUCHERS
 # ==============================================================================
 def panel_whatsapp_descarga(d):
     img_b = render_boucher_png(d["serie"], d["fecha"], d["nombre"], d["mes"], d["medio"], d["monto"], d["detalle"], d["tesorero"])
@@ -213,7 +230,7 @@ def panel_whatsapp_descarga(d):
             f"📅 *Fecha:* {d['fecha']}\n"
             f"🗓️ *Periodo/Mes:* {d['mes']}\n"
             f"💳 *Medio:* {d['medio']}\n"
-            f"💰 *Monto:* S/. {d['monto']:,.2f}\n"
+            f"💰 *Monto:* S/. {float(d['monto']):,.2f}\n"
             f"✍️ *Receptor:* {d['tesorero']}\n\n"
             f"🖼️ _(Se adjunta la imagen de su voucher oficial formalmente certificado)._\n\n"
             f"¡Muchas gracias por su fidelidad! Que el Señor continúe bendiciendo abundantemente su vida y hogar.\n\n"
@@ -243,7 +260,6 @@ def generar_pdf_reporte_mensual(df_mes_rep, anio_rep, mes_rep, tot_m, efe_m, ban
     c_prim = colors.HexColor("#1E3A8A")
     c_borde = colors.HexColor("#CBD5E1")
 
-    # Encabezado institucional
     t_head = Table([[
         Paragraph(
             "<b>IGLESIA EVANGÉLICA \"NAZARETH\" — ASAMBLEAS DE DIOS DEL PERÚ</b><br/>"
@@ -263,7 +279,6 @@ def generar_pdf_reporte_mensual(df_mes_rep, anio_rep, mes_rep, tot_m, efe_m, ban
     ]))
     elem.extend([t_head, Spacer(1, 10)])
 
-    # Resumen Financiero
     t_resumen = Table([
         ["TOTAL GENERAL INGRESADO", "TOTAL EN EFECTIVO", "TOTAL EN BANCO / TRANSFERENCIA"],
         [f"S/. {tot_m:,.2f}", f"S/. {efe_m:,.2f}", f"S/. {ban_m:,.2f}"]
@@ -280,7 +295,6 @@ def generar_pdf_reporte_mensual(df_mes_rep, anio_rep, mes_rep, tot_m, efe_m, ban
     ]))
     elem.extend([t_resumen, Spacer(1, 12)])
 
-    # Detalle de Registros
     filas = [["N°", "CONSTANCIA", "FECHA", "DNI", "HERMANO(A) APORTANTE", "MES", "MEDIO", "MONTO"]]
     idx = 1
     for _, r in df_mes_rep.iterrows():
@@ -315,7 +329,6 @@ def generar_pdf_reporte_mensual(df_mes_rep, anio_rep, mes_rep, tot_m, efe_m, ban
     ]))
     elem.extend([t_tabla, Spacer(1, 30)])
 
-    # Firmas
     t_firmas = Table([
         ["___________________________________", "___________________________________"],
         ["TESORERÍA GENERAL", "PASTORADO PRINCIPAL"],
@@ -339,6 +352,8 @@ opcion = st.radio(
     ["Registrar Nuevo Diezmo", "Ver Registros por Mes", "Ficha Individual Oficial", "⚙️ Modificar o Eliminar"], 
     horizontal=True
 )
+
+st.markdown("---")
 
 # ==============================================================================
 # 1. REGISTRAR NUEVO DIEZMO
@@ -369,7 +384,7 @@ if opcion == "Registrar Nuevo Diezmo":
                     )
                 core.query_db(
                     "INSERT INTO public.diezmos (fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle, codigo_comprobante) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (str(f_d), d_miembros[nom], nom, mes_c, medio, monto, det.strip(), sig_cod)
+                    (str(f_d), d_miembros[nom], nom, mes_c, medio, round(float(monto), 2), det.strip(), sig_cod)
                 )
                 core.registrar_log("Diezmos", "Registro", f"Diezmo {nom} S/. {monto:,.2f} ({sig_cod})")
                 st.session_state["ultimo_dz"] = {
@@ -380,11 +395,11 @@ if opcion == "Registrar Nuevo Diezmo":
                 st.rerun()
 
         if "ultimo_dz" in st.session_state:
-            st.success(f"🎉 Constancia N° **{st.session_state['ultimo_dz']['serie']}** emitida.")
+            st.success(f"🎉 Constancia N° **{st.session_state['ultimo_dz']['serie']}** emitida con éxito.")
             panel_whatsapp_descarga(st.session_state["ultimo_dz"])
 
 # ==============================================================================
-# 2. VER REGISTROS POR MES (TABLA, ASIENTOS Y REPORTE PDF)
+# 2. VER REGISTROS POR MES
 # ==============================================================================
 elif opcion == "Ver Registros por Mes":
     st.markdown("#### 🗓️ Control Mensual por Fecha Real de Abono")
@@ -555,7 +570,7 @@ elif opcion == "Ficha Individual Oficial":
         st.download_button("📄 Descargar Ficha Oficial en PDF", make_pdf(), f"Ficha_Diezmos_{d_miembros[hno]}_{hno}.pdf", "application/pdf")
 
 # ==============================================================================
-# 4. MODIFICAR O ELIMINAR CON FILTROS INTELIGENTES (UNIFICADO)
+# 4. MODIFICAR O ELIMINAR CON FILTROS
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### ⚙️ Gestión de Registros de Diezmo (Modificar o Eliminar)")
@@ -613,7 +628,6 @@ elif opcion == "⚙️ Modificar o Eliminar":
 
             accion_gest = st.radio("Acción a realizar sobre el diezmo seleccionado:", ["✏️ Editar Datos", "🗑️ Eliminar Registro"], horizontal=True)
 
-            # --- SUB-ACCIÓN 1: EDITAR ---
             if accion_gest == "✏️ Editar Datos":
                 try:
                     f_val = datetime.strptime(str(reg["fecha"]), "%Y-%m-%d").date()
@@ -644,7 +658,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                             fecha = ?, id_miembro = ?, nombre_miembro = ?, mes = ?, 
                             medio = ?, monto = ?, detalle = ?
                         WHERE id = ?
-                    """, (str(e_fecha), d_miembros[e_nom], e_nom, e_mes, e_medio, e_monto, e_det.strip(), id_sel))
+                    """, (str(e_fecha), d_miembros[e_nom], e_nom, e_mes, e_medio, round(float(e_monto), 2), e_det.strip(), id_sel))
 
                     core.registrar_log("Diezmos", "Edición", f"Actualizado {reg['serie_constancia']} ({e_nom}) S/. {e_monto:,.2f}")
                     st.session_state["ultimo_dz"] = {
@@ -659,7 +673,6 @@ elif opcion == "⚙️ Modificar o Eliminar":
                     st.success(f"Boucher **{reg['serie_constancia']}** actualizado:")
                     panel_whatsapp_descarga(st.session_state["ultimo_dz"])
 
-            # --- SUB-ACCIÓN 2: ELIMINAR ---
             elif accion_gest == "🗑️ Eliminar Registro":
                 st.warning(f"⚠️ ¿Confirma eliminar definitivamente la constancia **{reg['serie_constancia']}** de **{reg['nombre_miembro']}** por **S/. {reg['monto']:,.2f}**?")
                 st.caption("Nota: Si ya se asentó el mes en Tesorería, recuerda volver a pulsar 'Actualizar Asientos en Tesorería' en el control mensual.")
