@@ -199,7 +199,6 @@ def query_db(query, params=(), commit=True):
         if "MIEMBROS" not in q_limpia and "AUDITORIA" not in q_limpia:
             pg_query += " RETURNING id"
 
-    # Conversión estricta de NumPy (np.float64, np.int64) a tipos primitivos de Python
     params_limpios = []
     for p in params:
         if hasattr(p, "item"):
@@ -240,7 +239,7 @@ def registrar_log(modulo, accion, descripcion):
     query_db("INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (%s, %s, %s, %s)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), modulo, accion, descripcion))
 
 # ==============================================================================
-# DISEÑO Y ESTILOS GLOBALES
+# DISEÑO Y ESTILOS GLOBALES (RESPONSIVE PARA MÓVIL Y ESCRITORIO)
 # ==============================================================================
 def aplicar_estilos_base():
     verificar_licencia()
@@ -250,21 +249,31 @@ def aplicar_estilos_base():
 footer { visibility: hidden !important; }
 .stDeployButton { display: none !important; }
 
+/* Ocultar barra de herramientas de Streamlit sin bloquear el botón de menú lateral */
 [data-testid="stToolbar"], 
 [data-testid="stHeaderActionElements"],
 [data-testid="stToolbarActions"],
-.stAppToolbar,
-header button,
-header a { 
+.stAppToolbar { 
     display: none !important; 
     visibility: hidden !important; 
-    pointer-events: none !important; 
 }
 
+/* Mantener el botón para desplegar la barra lateral en celular */
 header[data-testid="stHeader"] {
     background-color: transparent !important;
-    height: 0px !important;
-    min-height: 0px !important;
+}
+
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
+    z-index: 999999 !important;
+    background: #FFFFFF !important;
+    border-radius: 8px !important;
+    border: 1px solid #CBD5E1 !important;
+    box-shadow: 0 2px 6px rgba(15,23,42,0.08) !important;
+    color: #1E40AF !important;
+    top: 10px !important;
+    left: 10px !important;
 }
 
 [data-testid="stSidebar"] { 
@@ -291,6 +300,12 @@ html, body, [class*="css"], .stApp {
     background: linear-gradient(135deg, #F8FAFC 0%, #E0E7FF 100%) !important; 
     color: #0F172A !important; 
     background-attachment: fixed !important; 
+}
+
+/* Ajuste responsive para los radio buttons horizontales (pestañas de acción) */
+div[data-testid="stRadio"] > div[role="radiogroup"] {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
 }
 
 div[data-testid="stMetric"] { 
@@ -326,6 +341,7 @@ div[data-testid="stMetricValue"] {
     border-bottom: none !important; 
     padding-bottom: 12px !important; 
     padding-top: 5px !important; 
+    flex-wrap: wrap !important;
 }
 .stTabs [data-baseweb="tab"] { 
     font-family: 'Plus Jakarta Sans', sans-serif !important; 
