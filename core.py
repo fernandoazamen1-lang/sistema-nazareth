@@ -111,7 +111,7 @@ def requerir_login():
             st.markdown("---")
 
 # ==============================================================================
-# CONEXIÓN DIRECTA CON SUPABASE STORAGE
+# CONEXIÓN CON SUPABASE STORAGE
 # ==============================================================================
 @st.cache_resource
 def init_supabase() -> Client:
@@ -124,29 +124,22 @@ supabase = init_supabase()
 def comprimir_y_subir_foto(archivo_subido, nombre_base):
     if archivo_subido is None:
         return ""
-    
     try:
         img = Image.open(archivo_subido)
         if img.mode != 'RGB':
             img = img.convert('RGB')
-        
         img.thumbnail((800, 800))
-        
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=75, optimize=True)
         byte_data = buf.getvalue()
-        
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         ruta_supabase = f"fotos_miembros/{nombre_base}_{timestamp}.jpg"
-        
         supabase.storage.from_("archivos_iglesia").upload(
             path=ruta_supabase,
             file=byte_data,
             file_options={"content-type": "image/jpeg", "upsert": "true"}
         )
-        
         return supabase.storage.from_("archivos_iglesia").get_public_url(ruta_supabase)
-        
     except Exception as e:
         st.warning(f"Aviso de Storage: {e}")
         return ""
@@ -239,52 +232,69 @@ def registrar_log(modulo, accion, descripcion):
     query_db("INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (%s, %s, %s, %s)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), modulo, accion, descripcion))
 
 # ==============================================================================
-# DISEÑO Y ESTILOS GLOBALES (RESPONSIVE PARA MÓVIL Y ESCRITORIO)
+# DISEÑO Y ESTILOS GLOBALES (BOTÓN DE MENÚ VISIBLE Y FLOTANTE)
 # ==============================================================================
 def aplicar_estilos_base():
     verificar_licencia()
     css_string = """
 <style translate="no">
-#MainMenu { display: none !important; }
-footer { display: none !important; }
-[data-testid="stDeployButton"] { display: none !important; }
-[data-testid="stDecoration"] { display: none !important; }
-[data-testid="stStatusWidget"] { display: none !important; }
+#MainMenu { visibility: hidden !important; }
+footer { visibility: hidden !important; }
+.stDeployButton { display: none !important; }
 
-/* Botón de apertura de barra lateral en móvil destacado y siempre visible */
+/* Mantener el header activo para dar soporte al botón de menú lateral */
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    display: flex !important;
+    z-index: 100 !important;
+}
+
+/* BOTÓN FLOTANTE PERMANENTE PARA ABRIR / CERRAR MENÚ (EN PC Y MÓVIL) */
 [data-testid="collapsedControl"],
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="stSidebarCollapseButton"] {
+[data-testid="stSidebarCollapsedControl"] {
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
-    background-color: #1E3A8A !important;
+    position: fixed !important;
+    top: 12px !important;
+    left: 12px !important;
+    z-index: 9999999 !important;
+    background: #1E3A8A !important;
     color: #FFFFFF !important;
+    border: 1.5px solid #3B82F6 !important;
     border-radius: 10px !important;
     padding: 6px 12px !important;
-    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.35) !important;
-    z-index: 9999999 !important;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.3) !important;
+    cursor: pointer !important;
 }
 
 [data-testid="collapsedControl"] svg,
-[data-testid="stSidebarCollapsedControl"] svg,
-[data-testid="stSidebarCollapseButton"] svg {
+[data-testid="stSidebarCollapsedControl"] svg {
     fill: #FFFFFF !important;
     stroke: #FFFFFF !important;
+    width: 22px !important;
+    height: 22px !important;
 }
 
+[data-testid="stSidebarCollapseButton"] {
+    display: flex !important;
+    visibility: visible !important;
+    color: #1E3A8A !important;
+}
+
+/* Barra lateral */
 [data-testid="stSidebar"] { 
     background: #FFFFFF !important; 
     border-right: 1px solid #E2E8F0 !important; 
-    box-shadow: 4px 0 15px rgba(15, 23, 42, 0.03) !important; 
+    box-shadow: 4px 0 15px rgba(15, 23, 42, 0.05) !important; 
 }
 [data-testid="stSidebarNav"] span { 
-    font-size: 13.5px !important; 
-    font-weight: 500 !important; 
-    color: #475569 !important; 
+    font-size: 14px !important; 
+    font-weight: 600 !important; 
+    color: #334155 !important; 
 }
 [data-testid="stSidebarNav"] [aria-current="page"] { 
-    background: linear-gradient(90deg, rgba(30, 64, 175, 0.08) 0%, transparent 100%) !important; 
+    background: linear-gradient(90deg, rgba(30, 64, 175, 0.1) 0%, transparent 100%) !important; 
     border-left: 4px solid #1E40AF !important; 
 }
 [data-testid="stSidebarNav"] [aria-current="page"] span { 
@@ -299,9 +309,7 @@ html, body, [class*="css"], .stApp {
     background-attachment: fixed !important; 
 }
 
-/* ========================================================================== */
-/* PESTAÑAS HORIZONTALES (st.radio y st.tabs) ADAPTABLES A MÓVIL */
-/* ========================================================================== */
+/* Opciones horizontales (st.radio) adaptables */
 div[data-testid="stRadio"] > div[role="radiogroup"] {
     display: flex !important;
     flex-direction: row !important;
@@ -314,27 +322,17 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label {
     background: #FFFFFF !important;
     border: 1.5px solid #CBD5E1 !important;
     border-radius: 10px !important;
-    padding: 8px 14px !important;
-    margin: 0 !important;
+    padding: 8px 16px !important;
     cursor: pointer !important;
     flex: 1 1 auto !important;
     text-align: center !important;
-    justify-content: center !important;
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04) !important;
-    transition: all 0.2s ease !important;
 }
 
-div[data-testid="stRadio"] > div[role="radiogroup"] > label:hover {
-    border-color: #1E40AF !important;
-    background: #EFF6FF !important;
-}
-
-/* Ocultar el punto circular del radio button para que luzca como botón pestaña */
 div[data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {
     display: none !important;
 }
 
-/* Estilo cuando la pestaña está seleccionada */
 div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {
     background: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%) !important;
     border-color: #1E3A8A !important;
@@ -342,40 +340,9 @@ div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {
 }
 
 div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p,
-div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) span,
-div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) div {
+div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) span {
     color: #FFFFFF !important;
     font-weight: 700 !important;
-}
-
-/* Pestañas nativas st.tabs responsive */
-.stTabs [data-baseweb="tab-list"] { 
-    display: flex !important;
-    flex-wrap: wrap !important;
-    gap: 8px !important; 
-    border-bottom: none !important; 
-    padding-bottom: 8px !important; 
-    padding-top: 4px !important; 
-    width: 100% !important;
-}
-.stTabs [data-baseweb="tab"] { 
-    flex: 1 1 auto !important;
-    text-align: center !important;
-    font-family: 'Plus Jakarta Sans', sans-serif !important; 
-    font-weight: 700 !important; 
-    font-size: 13.5px !important; 
-    padding: 9px 18px !important; 
-    border-radius: 10px !important; 
-    color: #475569 !important; 
-    background: #FFFFFF !important; 
-    border: 1px solid #CBD5E1 !important; 
-    box-shadow: 0 2px 4px rgba(15, 23, 42, 0.03) !important; 
-}
-.stTabs [aria-selected="true"] { 
-    color: #FFFFFF !important; 
-    background: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%) !important; 
-    border: 1px solid #1E3A8A !important; 
-    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.35) !important; 
 }
 
 div[data-testid="stMetric"] { 
