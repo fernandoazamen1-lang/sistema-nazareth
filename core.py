@@ -32,7 +32,7 @@ MAPA_MODULOS_SIDEBAR = {
 }
 
 # ==============================================================================
-# GESTIÓN DE CONEXIÓN A SUPABASE (SIN CONFLICTOS DE TRANSACCIÓN)
+# GESTIÓN DE CONEXIÓN A SUPABASE
 # ==============================================================================
 @contextmanager
 def get_db():
@@ -251,11 +251,15 @@ def query_db(query, params=(), commit=True):
         if "MIEMBROS" not in q_limpia and "AUDITORIA" not in q_limpia and "CONFIG_IGLESIA" not in q_limpia and "CIERRES_MENSUALES" not in q_limpia:
             pg_query += " RETURNING id"
 
-    params_limpios = [p.item() if hasattr(p, "item") else p for p in params]
+    params_limpios = [p.item() if hasattr(p, "item") else p for p in params] if params else []
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(pg_query, tuple(params_limpios))
+            if params_limpios:
+                cur.execute(pg_query, tuple(params_limpios))
+            else:
+                cur.execute(pg_query)
+                
             inserted_id = None
             if q_limpia.startswith("INSERT") and ("RETURNING id" in pg_query):
                 try:
@@ -272,10 +276,14 @@ def query_db(query, params=(), commit=True):
 @st.cache_data(ttl=180, show_spinner=False)
 def read_db(query, params=()):
     pg_query = query.replace("?", "%s")
-    params_limpios = [p.item() if hasattr(p, "item") else p for p in params]
+    params_limpios = [p.item() if hasattr(p, "item") else p for p in params] if params else []
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(pg_query, tuple(params_limpios))
+            if params_limpios:
+                cur.execute(pg_query, tuple(params_limpios))
+            else:
+                cur.execute(pg_query)
+                
             if cur.description:
                 columns = [desc[0] for desc in cur.description]
                 data = cur.fetchall()
