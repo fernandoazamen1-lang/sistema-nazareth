@@ -147,13 +147,13 @@ def requerir_login():
                 st.rerun()
             st.markdown("---")
 
-            # TARJETA OFICIAL PUNBAX
+            # Tarjeta lateral Punbax
             st.markdown(
                 """
-                <div style="background: #F8FAFC; border: 1.5px solid #CBD5E1; border-radius: 12px; padding: 12px 10px; text-align: center; margin-top: 15px; box-shadow: 0 2px 6px rgba(15,23,42,0.04);">
+                <div style="background: #F8FAFC; border: 1.5px solid #CBD5E1; border-radius: 12px; padding: 12px 10px; text-align: center; margin-top: 10px; box-shadow: 0 2px 6px rgba(15,23,42,0.04);">
                     <div style="font-weight: 900; color: #1E3A8A; font-size: 15px; letter-spacing: 1.2px;">PUNBAX</div>
-                    <div style="font-size: 11px; color: #64748B; margin-top: 2px;">Sistema de Gestión Eclesiástica</div>
-                    <div style="font-size: 10px; color: #94A3B8; margin-bottom: 10px;">Versión 2.0 • 2026</div>
+                    <div style="font-size: 11px; color: #64748B; margin-top: 2px;">Gestión Eclesiástica Cloud</div>
+                    <div style="font-size: 10px; color: #94A3B8; margin-bottom: 8px;">Versión 2.0 • 2026</div>
                     <div style="font-size: 11px; color: #475569;">Desarrollado por:</div>
                     <div style="font-size: 12px; font-weight: 800; color: #0F172A; margin-bottom: 8px;">Fernando Azaña Mendoza</div>
                     <a href="https://wa.me/51936015081?text=Hola%20Fernando,%20necesito%20soporte%20con%20el%20sistema%20Punbax" target="_blank" style="display: block; background-color: #25D366; color: white !important; padding: 7px 10px; border-radius: 8px; text-decoration: none; font-size: 11.5px; font-weight: 700; box-shadow: 0 2px 5px rgba(37,211,102,0.3);">
@@ -497,14 +497,35 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
 """
     st.markdown(css_string, unsafe_allow_html=True)
 
+    # 1. ENCABEZADO SUPERIOR PRINCIPAL VISIBLE EN TODAS LAS PÁGINAS
     st.markdown("""
-<div style="background: #FFFFFF; padding: 14px 20px; border-radius: 14px; display: flex; align-items: center; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px;">
-<div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 14px; border: 1px solid #DBEAFE; flex-shrink: 0;">⛪</div>
-<div style="flex-grow: 1;">
-<div style="font-size: 10.5px; font-weight: 700; color: #2563EB; letter-spacing: 1px; text-transform: uppercase;">Asambleas de Dios del Perú</div>
-<div style="font-size: 17px; font-weight: 800; color: #0F172A; font-family: 'Plus Jakarta Sans', sans-serif;">Iglesia Evangélica "Nazareth"</div>
+<div style="background: #FFFFFF; padding: 14px 20px; border-radius: 14px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #E2E8F0; box-shadow: 0 2px 6px rgba(15,23,42,0.03); margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+    <div style="display: flex; align-items: center;">
+        <div style="background: #EFF6FF; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-right: 14px; border: 1px solid #DBEAFE; flex-shrink: 0;">⛪</div>
+        <div>
+            <div style="font-size: 10.5px; font-weight: 700; color: #2563EB; letter-spacing: 1px; text-transform: uppercase;">Asambleas de Dios del Perú</div>
+            <div style="font-size: 17px; font-weight: 800; color: #0F172A; font-family: 'Plus Jakarta Sans', sans-serif;">Iglesia Evangélica "Nazareth"</div>
+        </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="background: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%); color: #FFFFFF; font-weight: 900; letter-spacing: 1px; font-size: 11px; padding: 5px 12px; border-radius: 8px; box-shadow: 0 2px 6px rgba(30,58,138,0.2);">PUNBAX</div>
+        <div style="background: #F1F5F9; padding: 5px 10px; border-radius: 8px; font-size: 11px; font-weight: 600; color: #475569;">v2.0 Cloud</div>
+    </div>
 </div>
-<div style="background: #F1F5F9; padding: 4px 10px; border-radius: 20px; font-size: 10.5px; font-weight: 600; color: #475569; white-space: nowrap;">Cloud</div>
+    """, unsafe_allow_html=True)
+
+    # 2. PIE DE PÁGINA (FOOTER) INFERIOR VISIBLE EN TODAS LAS PÁGINAS
+    st.markdown("""
+<div style="margin-top: 45px; margin-bottom: 25px; padding: 16px 20px; background: #FFFFFF; border-radius: 12px; border: 1px solid #E2E8F0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; box-shadow: 0 2px 6px rgba(15,23,42,0.02);">
+    <div>
+        <div style="font-weight: 800; color: #1E3A8A; font-size: 13px; letter-spacing: 0.8px;">SISTEMA PUNBAX • GESTIÓN ECLESIÁSTICA</div>
+        <div style="font-size: 11.5px; color: #64748B; margin-top: 2px;">Desarrollado por <b>Fernando Azaña Mendoza</b> | Versión Oficial 2.0 (2026)</div>
+    </div>
+    <div>
+        <a href="https://wa.me/51936015081?text=Hola%20Fernando,%20necesito%20soporte%20con%20el%20sistema%20Punbax" target="_blank" style="background-color: #25D366; color: white !important; padding: 7px 14px; border-radius: 8px; text-decoration: none; font-size: 11.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,211,102,0.3);">
+            💬 Contactar Soporte: 936-015-081
+        </a>
+    </div>
 </div>
     """, unsafe_allow_html=True)
 
