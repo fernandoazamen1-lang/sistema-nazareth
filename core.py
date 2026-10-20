@@ -138,18 +138,19 @@ def requerir_login():
             st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
     else:
-        # Renderizado fijo y garantizado del perfil y botón Cerrar Sesión en el Sidebar
-        with st.sidebar:
-            st.markdown(f"👤 **{st.session_state['usuario_actual']['nombre']}**")
-            st.caption(f"Rol: {st.session_state['usuario_actual']['rol']}")
-            if st.button("🚪 Cerrar Sesión", key="btn_logout_sidebar_global", use_container_width=True):
-                st.session_state["autenticado"] = False
-                st.session_state["usuario_actual"] = None
-                st.rerun()
-            st.markdown("---")
+        # PINTADO OBLIGATORIO DEL PERFIL Y CERRAR SESIÓN EN SIDEBAR
+        usuario_actual = st.session_state.get("usuario_actual")
+        if usuario_actual:
+            with st.sidebar:
+                st.markdown(f"👤 **{usuario_actual['nombre']}**")
+                st.caption(f"Rol: {usuario_actual['rol']}")
+                if st.button("🚪 Cerrar Sesión", key="btn_logout_sidebar_global", use_container_width=True):
+                    st.session_state["autenticado"] = False
+                    st.session_state["usuario_actual"] = None
+                    st.rerun()
+                st.markdown("---")
 
 def verificar_acceso_pagina(nombre_modulo: str):
-    """Verifica si el usuario tiene permiso para acceder al módulo."""
     if not st.session_state.get("autenticado", False):
         requerir_login()
 
@@ -481,9 +482,9 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
 """
     st.markdown(css_string, unsafe_allow_html=True)
 
-    # 1. ENCABEZADO SUPERIOR LIMPIO Y ELEGANTE
+    # 1. ENCABEZADO SUPERIOR LIMPIO (SIN EL CUADRO DE SOPORTE QUE ESTORBABA)
     st.markdown("""
-<div style="background: #FFFFFF; padding: 12px 18px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #E2E8F0; box-shadow: 0 2px 5px rgba(15,23,42,0.02); margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
+<div style="background: #FFFFFF; padding: 12px 18px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #E2E8F0; box-shadow: 0 2px 5px rgba(15,23,42,0.02); margin-bottom: 22px; flex-wrap: wrap; gap: 8px;">
     <div style="display: flex; align-items: center;">
         <div style="background: #EFF6FF; width: 38px; height: 38px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; margin-right: 12px; border: 1px solid #DBEAFE; flex-shrink: 0;">⛪</div>
         <div>
@@ -498,16 +499,17 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
 </div>
     """, unsafe_allow_html=True)
 
-    # 2. PIE DE PÁGINA DISCRETO AL FINAL DE LA PANTALLA
+def mostrar_pie_pagina():
+    """Llama a esta función al final de cada página para mostrar los créditos y soporte de forma estética."""
     st.markdown("""
-<div style="margin-top: 60px; margin-bottom: 20px; padding: 14px 18px; background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(8px); border-radius: 10px; border: 1px solid #E2E8F0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 1px 3px rgba(15,23,42,0.02);">
+<div style="margin-top: 50px; margin-bottom: 20px; padding: 14px 20px; background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(8px); border-radius: 12px; border: 1px solid #E2E8F0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 1px 3px rgba(15,23,42,0.02);">
     <div>
-        <div style="font-weight: 800; color: #1E3A8A; font-size: 11.5px; letter-spacing: 0.6px;">PUNBAX • SISTEMA DE GESTIÓN ECLESIÁSTICA</div>
-        <div style="font-size: 11px; color: #64748B;">Desarrollado por <b>Fernando Azaña Mendoza</b></div>
+        <div style="font-weight: 800; color: #1E3A8A; font-size: 12px; letter-spacing: 0.8px;">PUNBAX • SISTEMA DE GESTIÓN ECLESIÁSTICA</div>
+        <div style="font-size: 11px; color: #64748B; margin-top: 2px;">Desarrollado por <b>Fernando Azaña Mendoza</b> | Versión Oficial 2.0</div>
     </div>
     <div>
-        <a href="https://wa.me/51936015081?text=Hola%20Fernando,%20necesito%20soporte%20con%20el%20sistema%20Punbax" target="_blank" style="background-color: #25D366; color: white !important; padding: 6px 12px; border-radius: 6px; text-decoration: none; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; box-shadow: 0 2px 4px rgba(37,211,102,0.25);">
-            💬 Soporte: 936-015-081
+        <a href="https://wa.me/51936015081?text=Hola%20Fernando,%20necesito%20soporte%20con%20el%20sistema%20Punbax" target="_blank" style="background-color: #25D366; color: white !important; padding: 6px 14px; border-radius: 8px; text-decoration: none; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(37,211,102,0.25);">
+            💬 Soporte WhatsApp: 936-015-081
         </a>
     </div>
 </div>
