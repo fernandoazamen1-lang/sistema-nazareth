@@ -1,6 +1,6 @@
 import streamlit as st
 import core
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 import pandas as pd
 import calendar
 import re
@@ -17,7 +17,6 @@ core.requerir_login()
 core.verificar_acceso_pagina("Pagos Programados")
 core.aplicar_estilos_base()
 
-# Constantes del módulo
 CATEGORIAS = [
     "Servicios Básicos (Luz/Agua/Internet)", 
     "Alquiler de Local / Templo",
@@ -29,51 +28,6 @@ CATEGORIAS = [
 ]
 FONDOS = ["General", "Pro-Templo", "Misiones", "Jóvenes", "Damas", "Caballeros"]
 MEDIOS = ["Efectivo", "Depósito / Transferencia", "Yape / Plin"]
-
-# 3. Base de datos: asegurar tabla y columnas necesarias en public (PostgreSQL)
-try:
-    with core.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS public.pagos_programados (
-                    id SERIAL PRIMARY KEY,
-                    codigo TEXT,
-                    concepto TEXT,
-                    categoria TEXT,
-                    monto REAL DEFAULT 0.0,
-                    fondo TEXT DEFAULT 'General',
-                    fecha_vencimiento TEXT,
-                    periodicidad TEXT DEFAULT 'Mensual',
-                    estado TEXT DEFAULT 'Pendiente',
-                    fecha_pago TEXT,
-                    medio_pago TEXT,
-                    tipo_comprobante TEXT DEFAULT 'Recibo',
-                    serie_comprobante TEXT DEFAULT '',
-                    numero_comprobante TEXT DEFAULT '',
-                    num_operacion TEXT,
-                    responsable TEXT,
-                    observaciones TEXT
-                );
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS codigo TEXT;
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS concepto TEXT;
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS categoria TEXT;
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS monto REAL DEFAULT 0.0;
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS fondo TEXT DEFAULT 'General';
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS fecha_vencimiento TEXT;
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS periodicidad TEXT DEFAULT 'Mensual';
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS estado TEXT DEFAULT 'Pendiente';
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS fecha_pago TEXT;
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS medio_pago TEXT;
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS tipo_comprobante TEXT DEFAULT 'Recibo';
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS serie_comprobante TEXT DEFAULT '';
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS numero_comprobante TEXT DEFAULT '';
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS num_operacion TEXT;
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS responsable TEXT;
-                ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS observaciones TEXT;
-            """)
-        conn.commit()
-except Exception:
-    pass
 
 def get_sig_codigo_prg():
     df_u = core.read_db("SELECT codigo FROM public.pagos_programados WHERE codigo LIKE ? ORDER BY id DESC LIMIT 1", ("PRG-%",))
@@ -159,7 +113,7 @@ st.markdown("---")
 # ==============================================================================
 if opcion == "📆 Calendario y Cronograma":
     st.markdown("#### 📆 Calendario Mensual de Vencimientos y Compromisos")
-    df_todos = core.read_db("SELECT * FROM public.pagos_programados ORDER BY CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE) ASC, id DESC")
+    df_todos = core.read_db("SELECT id, codigo, concepto, categoria, monto, fondo, fecha_vencimiento, periodicidad, estado, serie_comprobante, numero_comprobante FROM public.pagos_programados ORDER BY CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE) ASC, id DESC")
 
     hoy = date.today()
     c_f1, c_f2 = st.columns(2)
@@ -292,12 +246,12 @@ if opcion == "📆 Calendario y Cronograma":
         st.dataframe(df_mostrar.style.format({"Monto (S/.)": "S/. {:,.2f}"}), use_container_width=True, hide_index=True)
 
 # ==============================================================================
-# 2. PROGRAMAR NUEVO COMPROMISO
+# 2. PROGRAMAR NUEVO COMPROMISO (CON INSERT EN LOTE)
 # ==============================================================================
 elif opcion == "➕ Programar Compromiso":
     st.markdown("#### ➕ Agendar Nuevo Compromiso o Gasto Recurrente")
     sig_cod = get_sig_codigo_prg()
-    st.info(f"🔖 **Código autogenerado para el compromiso:** `{sig_cod}` *(La serie y número del comprobante se asignarán al momento del pago)*")
+    st.info(f"🔖 **Código autogenerado para el compromiso:** `{sig_cod}`")
 
     with st.form("form_nuevo_pago_prg"):
         c1, c2 = st.columns(2)
@@ -311,7 +265,7 @@ elif opcion == "➕ Programar Compromiso":
             periodicidad = st.selectbox("Periodicidad:", ["Mensual", "Bimestral", "Único / Puntual", "Anual"])
             meses_a_generar = 1
             if periodicidad == "Mensual":
-                meses_a_generar = st.slider("Meses consecutivos a programar en agenda:", min_value=1, max_value=12, value=6, help="Genera automáticamente los vencimientos mensuales para cada periodo consecutivo.")
+                meses_a_generar = st.slider("Meses consecutivos a programar en agenda:", min_value=1, max_value=12, value=6)
             observaciones = st.text_area("Notas / Observaciones:", placeholder="Ej. N° de Suministro: 1284950...")
 
         btn_guardar_prg = st.form_submit_button(f"💾 Agendar Compromiso ({sig_cod})", type="primary")
@@ -322,15 +276,26 @@ elif opcion == "➕ Programar Compromiso":
         else:
             if periodicidad == "Mensual" and meses_a_generar > 1:
                 base_num = int(sig_cod.split("-")[-1].strip())
+                filas_lote = []
                 for i in range(meses_a_generar):
                     cod_mes = f"PRG-{base_num + i:04d}"
                     f_calc = sumar_meses(fecha_venc, i)
                     nom_concepto = f"{concepto.strip()} ({core.MESES[f_calc.month - 1][:3]})"
-                    core.query_db("""
-                        INSERT INTO public.pagos_programados 
-                        (codigo, concepto, categoria, monto, fondo, fecha_vencimiento, periodicidad, estado, serie_comprobante, numero_comprobante, observaciones)
-                        VALUES (?, ?, ?, ?, ?, ?, 'Mensual', 'Pendiente', '', '', ?)
-                    """, (cod_mes, nom_concepto, categoria, monto_previsto, fondo_cargo, str(f_calc), observaciones.strip()))
+                    filas_lote.append((
+                        cod_mes, nom_concepto, categoria, monto_previsto, fondo_cargo, str(f_calc), 'Mensual', 'Pendiente', '', '', observaciones.strip()
+                    ))
+                
+                with core.get_db() as conn:
+                    with conn.cursor() as cur:
+                        from psycopg2.extras import execute_batch
+                        sql_lote = """
+                            INSERT INTO public.pagos_programados 
+                            (codigo, concepto, categoria, monto, fondo, fecha_vencimiento, periodicidad, estado, serie_comprobante, numero_comprobante, observaciones)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """
+                        execute_batch(cur, sql_lote, filas_lote, page_size=100)
+                    conn.commit()
+                st.cache_data.clear()
                 st.toast(f"✅ Se programaron {meses_a_generar} meses consecutivos.")
             else:
                 core.query_db("""
@@ -375,8 +340,6 @@ elif opcion == "💳 Ejecutar Pago (Liquidar)":
 
             with c2:
                 st.markdown("##### 🧾 Datos del Comprobante / Recibo")
-                st.caption("Si cuentas con recibo físico o electrónico, ingresa su serie y número. Si los dejas vacíos, se generará uno genérico automáticamente.")
-                
                 c_s1, c_s2 = st.columns(2)
                 with c_s1:
                     serie_input = st.text_input("Serie:", placeholder="Ej. B001, F001, REC")
@@ -449,7 +412,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
             with col_f6:
                 filtro_categoria = st.selectbox("Categoría:", ["Todos"] + CATEGORIAS, index=0)
 
-        df_filtrado = df_todos_gest.copy()
+        df_filtrado = df_todos_gest
 
         if filtro_texto.strip():
             txt = filtro_texto.strip().lower()
@@ -582,7 +545,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                     f_pago_del = parsear_fecha_segura(reg_mod.get("fecha_pago"), date.today())
                     folio_del, _, _, _ = obtener_folio_comprobante(s_del, n_del, reg_mod["codigo"], f_pago_del)
 
-                    st.warning(f"⚠️ Se eliminará **únicamente** la cuota **{reg_mod['codigo']}** ({reg_mod['concepto']}). Si ya estaba liquidada, su asiento contable se revertirá de Tesorería.")
+                    st.warning(f"⚠️ Se eliminará **únicamente** la cuota **{reg_mod['codigo']}** ({reg_mod['concepto']}).")
                     if st.button("Confirmar Eliminación de Esta Cuota", type="primary"):
                         core.query_db("DELETE FROM public.pagos_programados WHERE id=?", (id_mod,))
                         core.query_db("DELETE FROM public.movimientos WHERE comprobante=? OR comprobante=?", (folio_del, reg_mod["codigo"]))
@@ -596,8 +559,8 @@ elif opcion == "⚙️ Modificar o Eliminar":
                         (f"{concepto_raiz}%", concepto_raiz)
                     )
                     cant_serie = len(df_serie)
-                    st.error(f"🚨 **¡ATENCIÓN!** Se eliminarán **todas las {cant_serie} cuotas** vinculadas a la serie **'{concepto_raiz}'** (tanto pendientes como pagadas).")
-                    st.write(f"Cuotas incluidas en la serie: {', '.join(df_serie['codigo'].tolist())}")
+                    st.error(f"🚨 **¡ATENCIÓN!** Se eliminarán **todas las {cant_serie} cuotas** vinculadas a la serie **'{concepto_raiz}'**.")
+                    st.write(f"Cuotas incluidas: {', '.join(df_serie['codigo'].tolist())}")
 
                     if st.button(f"Confirmar Eliminación de la Serie Completa ({cant_serie} cuotas)", type="primary"):
                         for _, r_s in df_serie.iterrows():
@@ -616,5 +579,5 @@ elif opcion == "⚙️ Modificar o Eliminar":
                         )
 
                         core.registrar_log("Pagos Programados", "Eliminación Serie General", f"Eliminada serie completa '{concepto_raiz}' ({cant_serie} registros)")
-                        st.toast(f"🗑️ Serie '{concepto_raiz}' ({cant_serie} cuotas) y sus asientos contables eliminados.")
+                        st.toast(f"🗑️ Serie '{concepto_raiz}' eliminada.")
                         st.rerun()
