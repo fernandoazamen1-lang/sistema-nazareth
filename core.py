@@ -504,6 +504,26 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
 </div>
     """, unsafe_allow_html=True)
 
+    # Pie de página institucional y créditos en la barra lateral
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown(
+            """
+            <div style="text-align: center; color: #64748B; font-size: 11.5px; line-height: 1.5; padding: 10px 5px;">
+                <b style="color: #1E3A8A; font-size: 14px; letter-spacing: 0.5px;">PUNBAX</b><br/>
+                <span style="font-size: 11px; color: #475569;">Sistema de Gestión Eclesiástica</span><br/>
+                <span style="font-size: 10px; color: #94A3B8;">Versión 2.0 • 2026</span><br/><br/>
+                <span style="color: #64748B;">Desarrollado por:</span><br/>
+                <b style="color: #0F172A; font-size: 12px;">Fernando Azaña Mendoza</b><br/>
+                📞 Soporte Técnico:<br/>
+                <a href="https://wa.me/51936015081?text=Hola%20Fernando,%20necesito%20soporte%20con%20el%20sistema%20Punbax" target="_blank" style="color: #2563EB; text-decoration: none; font-weight: 700;">
+                    936-015-081
+                </a>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
 def banner_modulo(icono, titulo, subtitulo, tag_derecha="Módulo Cloud"):
     st.markdown(f"""
 <div style="background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 100%); padding: 18px 22px; border-radius: 16px; margin-bottom: 20px; color: #FFFFFF; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12); display: flex; justify-content: space-between; align-items: center; border: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap; gap: 10px;">
