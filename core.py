@@ -1,6 +1,5 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from psycopg2.pool import ThreadedConnectionPool
 import pandas as pd
 from contextlib import contextmanager
 from datetime import datetime, date
@@ -33,53 +32,19 @@ MAPA_MODULOS_SIDEBAR = {
 }
 
 # ==============================================================================
-# POOL PERSISTENTE DE CONEXIONES EN CACHÉ (MANTIENE LA CONEXIÓN ACTIVA)
+# GESTIÓN DE CONEXIÓN A SUPABASE (SIN CONFLICTOS DE TRANSACCIÓN)
 # ==============================================================================
-@st.cache_resource
-def get_db_pool():
-    url = st.secrets["SUPABASE_DB_URL"]
-    return ThreadedConnectionPool(
-        minconn=1,
-        maxconn=5,
-        dsn=url,
-        cursor_factory=RealDictCursor
-    )
-
 @contextmanager
 def get_db():
-    pool = get_db_pool()
-    conn = None
+    url = st.secrets["SUPABASE_DB_URL"]
+    conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
     try:
-        conn = pool.getconn()
-        if conn.closed:
-            pool.putconn(conn, close=True)
-            conn = pool.getconn()
-        else:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1;")
-    except Exception:
-        try:
-            if conn:
-                pool.putconn(conn, close=True)
-        except Exception:
-            pass
-        url = st.secrets["SUPABASE_DB_URL"]
-        conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
-    
-    conn.autocommit = True
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SET search_path TO public;")
         yield conn
     finally:
         try:
-            if not conn.closed:
-                pool.putconn(conn)
+            conn.close()
         except Exception:
-            try:
-                conn.close()
-            except Exception:
-                pass
+            pass
 
 # ==============================================================================
 # SEGURIDAD, LOGIN Y VERIFICACIÓN DE ACCESOS
@@ -107,6 +72,7 @@ def validar_login(usuario: str, password_plana: str):
                         """,
                         (p_hash, p_hash)
                     )
+                conn.commit()
         except Exception:
             pass
 
@@ -115,8 +81,9 @@ def validar_login(usuario: str, password_plana: str):
             with conn.cursor() as cur:
                 try:
                     cur.execute("ALTER TABLE public.usuarios_sistema ADD COLUMN IF NOT EXISTS permisos TEXT DEFAULT 'TODOS';")
+                    conn.commit()
                 except Exception:
-                    pass
+                    conn.rollback()
 
                 cur.execute(
                     """
@@ -298,6 +265,7 @@ def query_db(query, params=(), commit=True):
                 except Exception:
                     pass
             if commit:
+                conn.commit()
                 st.cache_data.clear()
             return inserted_id
 
