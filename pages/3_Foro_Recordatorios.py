@@ -14,26 +14,6 @@ core.requerir_login()
 core.verificar_acceso_pagina("Foro / Recordatorios")
 core.aplicar_estilos_base()
 
-# 3. Asegurar estructura de tabla en esquema public (PostgreSQL)
-try:
-    with core.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS public.foro_recordatorios (
-                    id SERIAL PRIMARY KEY,
-                    fecha_creacion DATE NOT NULL,
-                    autor TEXT NOT NULL,
-                    titulo TEXT NOT NULL,
-                    contenido TEXT NOT NULL,
-                    fecha_limite TEXT DEFAULT '',
-                    prioridad TEXT DEFAULT 'Media',
-                    leido INTEGER DEFAULT 0
-                );
-            """)
-        conn.commit()
-except Exception:
-    pass
-
 st.subheader("💬 Foro Interno y Recordatorios")
 
 opcion = st.radio(
@@ -48,7 +28,7 @@ st.markdown("---")
 # VISTA 1: TABLÓN DE NOTAS
 # ==============================================================================
 if opcion == "Tablón de Notas":
-    df_foro = core.read_db("SELECT * FROM public.foro_recordatorios ORDER BY id DESC")
+    df_foro = core.read_db("SELECT id, fecha_creacion, autor, titulo, contenido, fecha_limite, prioridad, leido FROM public.foro_recordatorios ORDER BY id DESC")
     
     if df_foro.empty:
         st.info("No hay notas ni recordatorios registrados.")
