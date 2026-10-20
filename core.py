@@ -138,7 +138,6 @@ def requerir_login():
             st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
     else:
-        # PINTADO OBLIGATORIO DEL PERFIL Y CERRAR SESIÓN EN SIDEBAR
         usuario_actual = st.session_state.get("usuario_actual")
         if usuario_actual:
             with st.sidebar:
@@ -482,7 +481,7 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
 """
     st.markdown(css_string, unsafe_allow_html=True)
 
-    # 1. ENCABEZADO SUPERIOR LIMPIO (SIN EL CUADRO DE SOPORTE QUE ESTORBABA)
+    # Encabezado superior limpio (sin el bloque de soporte que aparecía en el medio)
     st.markdown("""
 <div style="background: #FFFFFF; padding: 12px 18px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #E2E8F0; box-shadow: 0 2px 5px rgba(15,23,42,0.02); margin-bottom: 22px; flex-wrap: wrap; gap: 8px;">
     <div style="display: flex; align-items: center;">
@@ -500,7 +499,7 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
     """, unsafe_allow_html=True)
 
 def mostrar_pie_pagina():
-    """Llama a esta función al final de cada página para mostrar los créditos y soporte de forma estética."""
+    """Llama a esta función al final de cada página para mostrar los créditos y soporte de forma estética y ordenada."""
     st.markdown("""
 <div style="margin-top: 50px; margin-bottom: 20px; padding: 14px 20px; background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(8px); border-radius: 12px; border: 1px solid #E2E8F0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 1px 3px rgba(15,23,42,0.02);">
     <div>
