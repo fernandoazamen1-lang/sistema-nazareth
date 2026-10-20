@@ -3,10 +3,6 @@ import core
 import io
 from datetime import date, datetime
 import pandas as pd
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib import colors
 
 # 1. Configuración de página
 st.set_page_config(
@@ -20,50 +16,35 @@ core.requerir_login()
 core.verificar_acceso_pagina("Sostenimiento Pastoral")
 core.aplicar_estilos_base()
 
-# 3. Base de datos: asegurar tabla con columnas previsionales en esquema public
-try:
-    with core.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS public.sostenimiento_pastoral (
-                    id SERIAL PRIMARY KEY,
-                    codigo TEXT,
-                    fecha TEXT,
-                    tipo_beneficiario TEXT,
-                    pastor_nombre TEXT,
-                    pastor_dni TEXT,
-                    mes TEXT,
-                    monto REAL,
-                    medio TEXT,
-                    motivo_evento TEXT,
-                    tesorero TEXT,
-                    regimen_pension TEXT DEFAULT 'Sin Descuento',
-                    descuento_pension REAL DEFAULT 0.0,
-                    essalud_aporte REAL DEFAULT 0.0,
-                    monto_neto REAL DEFAULT 0.0
-                );
-                ALTER TABLE public.sostenimiento_pastoral ADD COLUMN IF NOT EXISTS regimen_pension TEXT DEFAULT 'Sin Descuento';
-                ALTER TABLE public.sostenimiento_pastoral ADD COLUMN IF NOT EXISTS descuento_pension REAL DEFAULT 0.0;
-                ALTER TABLE public.sostenimiento_pastoral ADD COLUMN IF NOT EXISTS essalud_aporte REAL DEFAULT 0.0;
-                ALTER TABLE public.sostenimiento_pastoral ADD COLUMN IF NOT EXISTS monto_neto REAL DEFAULT 0.0;
-            """)
-        conn.commit()
-except Exception:
-    pass
+# ==============================================================================
+# CARGA DE CONFIGURACIÓN PERSISTENTE EN MEMORIA (OPTIMIZADA)
+# ==============================================================================
+@st.cache_data(ttl=120, show_spinner=False)
+def cargar_config_pastoral():
+    df = core.read_db("""
+        SELECT modulo, descripcion 
+        FROM public.auditoria 
+        WHERE modulo IN ('Config_PastorPrincipal', 'Config_PastorPrincipal_DNI', 'Config_Tesorero')
+        ORDER BY id ASC
+    """)
+    cfg = {}
+    if not df.empty:
+        for _, r in df.iterrows():
+            cfg[r["modulo"]] = r["descripcion"]
+            
+    pastor_def = cfg.get('Config_PastorPrincipal', "Pr. Titular")
+    dni_def = cfg.get('Config_PastorPrincipal_DNI', "")
+    tes_def = cfg.get('Config_Tesorero', "Tesorero General")
+    return pastor_def, dni_def, tes_def
 
-# Funciones de configuración persistente
-def _get_config(modulo, por_defecto=""):
-    df = core.read_db("SELECT descripcion FROM public.auditoria WHERE modulo=? ORDER BY id DESC LIMIT 1", (modulo,))
-    return df.iloc[0]["descripcion"] if not df.empty else por_defecto
+pastor_p_def, dni_p_def, tesorero_def = cargar_config_pastoral()
 
 def _set_config(modulo, nuevo_val, actual_val):
     if nuevo_val.strip() and nuevo_val.strip() != actual_val:
-        core.query_db("INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (?, ?, 'Actualizar', ?)",
-                      (str(date.today()), modulo, nuevo_val.strip()))
-
-pastor_p_def = _get_config('Config_PastorPrincipal', "Pr. Titular")
-dni_p_def = _get_config('Config_PastorPrincipal_DNI', "")
-tesorero_def = _get_config('Config_Tesorero', "Tesorero General")
+        core.query_db(
+            "INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (?, ?, 'Actualizar', ?)",
+            (str(date.today()), modulo, nuevo_val.strip())
+        )
 
 # Lógica correlativa y contable
 def get_sig_codigo(prefijo):
@@ -92,8 +73,13 @@ def _sincronizar_asiento_tesoreria(fecha, tipo_beneficiario, monto_neto, medio, 
             VALUES (?, 'Egreso', 'Sostenimiento Pastoral', ?, 'General', ?, ?, ?, ?, ?, '', 'Cobrado')
         """, (str(fecha), subcat, monto_neto, medio, codigo, det_caja, tesorero))
 
-# Generador de Acta PDF Profesional
+# Generador de Acta PDF Profesional (Bajo demanda)
 def generar_acta_pastoral_pdf(codigo, fecha, pastor, dni, tipo, mes_actividad, bruto, desc_pension, essalud, neto, medio, motivo, tesorero, regimen):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=40, rightMargin=40, topMargin=36, bottomMargin=36)
     elements = []
@@ -340,11 +326,15 @@ if opcion == "✍️ Registrar Sostenimiento u Ofrenda":
     if "ultimo_comprobante" in st.session_state:
         uc = st.session_state["ultimo_comprobante"]
         st.success(f"🎉 Acta **{uc['codigo']}** generada con éxito para {uc['pastor']}.")
-        pdf_bytes = generar_acta_pastoral_pdf(
-            uc["codigo"], uc["fecha"], uc["pastor"], uc["dni"], uc["tipo"], uc["mes"],
-            uc["bruto"], uc["desc_pension"], uc["essalud"], uc["neto"], uc["medio"], uc["motivo"], uc["tesorero"], uc.get("regimen", "Sin Descuento")
+        st.download_button(
+            f"📄 Descargar Acta Oficial en PDF ({uc['codigo']})",
+            data=lambda: generar_acta_pastoral_pdf(
+                uc["codigo"], uc["fecha"], uc["pastor"], uc["dni"], uc["tipo"], uc["mes"],
+                uc["bruto"], uc["desc_pension"], uc["essalud"], uc["neto"], uc["medio"], uc["motivo"], uc["tesorero"], uc.get("regimen", "Sin Descuento")
+            ),
+            file_name=f"Acta_Sostenimiento_{uc['codigo'].replace(' ','')}_{uc['pastor']}.pdf",
+            mime="application/pdf"
         )
-        st.download_button(f"📄 Descargar Acta Oficial en PDF ({uc['codigo']})", pdf_bytes, f"Acta_Sostenimiento_{uc['codigo'].replace(' ','')}_{uc['pastor']}.pdf", "application/pdf")
 
 # ==============================================================================
 # 2. CONSULTAS Y REPORTES
@@ -406,6 +396,11 @@ elif opcion == "📋 Consultas y Reportes Consolidados":
             }), use_container_width=True, hide_index=True)
 
             def generar_reporte_consolidado_pdf(df_datos, anio, mes, tipo_titulo):
+                from reportlab.lib.pagesizes import landscape, letter
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+                from reportlab.lib.styles import ParagraphStyle
+                from reportlab.lib import colors
+
                 buf = io.BytesIO()
                 doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=30, rightMargin=30, topMargin=30, bottomMargin=30)
                 t_head = Table([[
@@ -441,9 +436,9 @@ elif opcion == "📋 Consultas y Reportes Consolidados":
 
             st.download_button(
                 f"📄 Descargar Reporte en PDF ({filtro_vista})",
-                generar_reporte_consolidado_pdf(df_mostrar, anio_sel, mes_sel, filtro_vista),
-                f"Reporte_Ministerial_{anio_sel}_{mes_sel}.pdf",
-                "application/pdf"
+                data=lambda: generar_reporte_consolidado_pdf(df_mostrar, anio_sel, mes_sel, filtro_vista),
+                file_name=f"Reporte_Ministerial_{anio_sel}_{mes_sel}.pdf",
+                mime="application/pdf"
             )
 
 # ==============================================================================
