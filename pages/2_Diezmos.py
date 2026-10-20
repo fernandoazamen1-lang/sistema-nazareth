@@ -5,12 +5,8 @@ import os, io, urllib.parse, calendar
 from datetime import date, datetime
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib import colors
 
-# 1. Configuración de página (primera orden de Streamlit)
+# 1. Configuración de página
 st.set_page_config(
     page_title="Módulo de Diezmos", 
     page_icon="📖", 
@@ -21,61 +17,26 @@ st.set_page_config(
 core.verificar_acceso_pagina("Diezmos")
 core.aplicar_estilos_base()
 
-# Asegurar tablas requeridas y columnas en public (PostgreSQL)
-try:
-    with core.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS public.movimientos (
-                    id SERIAL PRIMARY KEY,
-                    fecha DATE NOT NULL,
-                    tipo TEXT NOT NULL,
-                    categoria TEXT NOT NULL,
-                    subcategoria TEXT DEFAULT '',
-                    fondo TEXT DEFAULT 'General',
-                    monto NUMERIC(12, 2) NOT NULL,
-                    medio TEXT DEFAULT 'Efectivo',
-                    comprobante TEXT DEFAULT '',
-                    detalle TEXT DEFAULT '',
-                    responsable TEXT DEFAULT '',
-                    archivo_foto TEXT DEFAULT '',
-                    estado_credito TEXT DEFAULT 'Cobrado',
-                    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS public.diezmos (
-                    id SERIAL PRIMARY KEY,
-                    fecha DATE NOT NULL,
-                    id_miembro TEXT NOT NULL,
-                    nombre_miembro TEXT NOT NULL,
-                    mes TEXT NOT NULL,
-                    medio TEXT DEFAULT 'Efectivo',
-                    monto NUMERIC(12, 2) NOT NULL,
-                    detalle TEXT DEFAULT '',
-                    codigo_comprobante TEXT DEFAULT '',
-                    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                ALTER TABLE public.diezmos ADD COLUMN IF NOT EXISTS codigo_comprobante TEXT DEFAULT '';
-            """)
-        conn.commit()
-except Exception:
-    pass
+# ==============================================================================
+# CARGA DE CATÁLOGOS BASE EN MEMORIA (OPTIMIZADA)
+# ==============================================================================
+@st.cache_data(ttl=120, show_spinner=False)
+def cargar_catalogos_diezmos():
+    df_miem = core.read_db("SELECT id_miembro, nombre, telefono FROM public.miembros ORDER BY nombre ASC")
+    d_m = dict(zip(df_miem["nombre"], df_miem["id_miembro"])) if not df_miem.empty else {}
+    d_t = dict(zip(df_miem["nombre"], df_miem["telefono"])) if not df_miem.empty else {}
 
-# Catálogos base
-df_m = core.read_db("SELECT id_miembro, nombre, telefono FROM public.miembros ORDER BY nombre ASC")
-d_miembros = dict(zip(df_m["nombre"], df_m["id_miembro"])) if not df_m.empty else {}
-d_telefonos = dict(zip(df_m["nombre"], df_m["telefono"])) if not df_m.empty else {}
+    df_tes = core.read_db("SELECT descripcion FROM public.auditoria WHERE modulo='Config_Tesorero' ORDER BY id DESC LIMIT 1")
+    tes_def = df_tes.iloc[0]["descripcion"] if not df_tes.empty else "Tesorero General"
+    return d_m, d_t, tes_def
 
-df_t = core.read_db("SELECT descripcion FROM public.auditoria WHERE modulo='Config_Tesorero' ORDER BY id DESC LIMIT 1")
-tesorero_def = df_t.iloc[0]["descripcion"] if not df_t.empty else "Tesorero General"
+d_miembros, d_telefonos, tesorero_def = cargar_catalogos_diezmos()
 
 # ==============================================================================
-# MOTOR TIPOGRÁFICO UNICODE GARANTIZADO (Ñ, TILDES, SIGNOS)
+# MOTOR TIPOGRÁFICO UNICODE GARANTIZADO
 # ==============================================================================
+@st.cache_resource(show_spinner=False)
 def get_font(size, bold=False):
-    """
-    Carga la fuente TrueType 'Bitstream Vera' incluida directamente en ReportLab.
-    Garantiza soporte completo para Ñ, tildes y signos sin depender de descargas externas.
-    """
     try:
         dir_rl = os.path.dirname(reportlab.__file__)
         archivo_fuente = "VeraBd.ttf" if bold else "Vera.ttf"
@@ -217,7 +178,6 @@ def panel_whatsapp_descarga(d):
         )
         
         st.markdown("---")
-        
         st.markdown("**Paso 2:** Abre WhatsApp y adjunta la imagen con el clip 📎.")
         t_raw = "".join(filter(str.isdigit, str(d.get("telefono", ""))))
         tel = st.text_input("Número de celular (9 dígitos):", value=t_raw, placeholder="Ej. 987654321")
@@ -254,6 +214,11 @@ def panel_whatsapp_descarga(d):
         )
 
 def generar_pdf_reporte_mensual(df_mes_rep, anio_rep, mes_rep, tot_m, efe_m, ban_m):
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=25, rightMargin=25, topMargin=25, bottomMargin=25)
     elem = []
@@ -425,12 +390,11 @@ elif opcion == "Ver Registros por Mes":
         m3.metric("En Banco", f"S/. {ban:,.2f}")
 
         if not df_f.empty:
-            pdf_mes_bytes = generar_pdf_reporte_mensual(df_f, anio_s, mes_s, tot, efe, ban)
             col_b_pdf, _ = st.columns([3, 4])
             with col_b_pdf:
                 st.download_button(
                     label=f"📄 Descargar Reporte Mensual en PDF ({mes_s} {anio_s})",
-                    data=pdf_mes_bytes,
+                    data=lambda: generar_pdf_reporte_mensual(df_f, anio_s, mes_s, tot, efe, ban),
                     file_name=f"Reporte_Diezmos_{mes_s}_{anio_s}.pdf",
                     mime="application/pdf",
                     type="primary"
@@ -531,6 +495,11 @@ elif opcion == "Ficha Individual Oficial":
         """, unsafe_allow_html=True)
 
         def make_pdf():
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import ParagraphStyle
+            from reportlab.lib import colors
+
             buf = io.BytesIO()
             doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
             top = Table([[
@@ -567,7 +536,12 @@ elif opcion == "Ficha Individual Oficial":
             doc.build([top, Spacer(1, 10), id_t, Spacer(1, 6), decl, Spacer(1, 10), tb_g, Spacer(1, 6), Paragraph(f"<b>Fecha de Emisión:</b> {f_imp.strftime('%d/%m/%Y')}", ParagraphStyle('E', fontSize=7.5, alignment=2)), Spacer(1, 35), firmas])
             return buf.getvalue()
 
-        st.download_button("📄 Descargar Ficha Oficial en PDF", make_pdf(), f"Ficha_Diezmos_{d_miembros[hno]}_{hno}.pdf", "application/pdf")
+        st.download_button(
+            "📄 Descargar Ficha Oficial en PDF",
+            data=make_pdf,
+            file_name=f"Ficha_Diezmos_{d_miembros[hno]}_{hno}.pdf",
+            mime="application/pdf"
+        )
 
 # ==============================================================================
 # 4. MODIFICAR O ELIMINAR CON FILTROS
@@ -595,7 +569,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
             with col_f4:
                 filtro_medio = st.selectbox("Medio de Pago:", ["Todos"] + core.MEDIOS, index=0)
 
-        df_filtrado = df_all.copy()
+        df_filtrado = df_all
         if buscar_txt.strip():
             txt = buscar_txt.strip().lower()
             df_filtrado = df_filtrado[
