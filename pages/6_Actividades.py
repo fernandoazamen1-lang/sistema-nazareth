@@ -3,12 +3,8 @@ import core
 from datetime import date
 import io
 import pandas as pd
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib import colors
 
-# 1. Configuración de página (primera orden de Streamlit)
+# 1. Configuración de página
 st.set_page_config(
     page_title="Actividades Pro-Fondos", 
     page_icon="🍲", 
@@ -20,46 +16,18 @@ core.requerir_login()
 core.verificar_acceso_pagina("Actividades")
 core.aplicar_estilos_base()
 
-# 3. Asegurar estructura de tablas en esquema public (PostgreSQL)
-try:
-    with core.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS public.actividades (
-                    id SERIAL PRIMARY KEY,
-                    nombre TEXT NOT NULL,
-                    fecha DATE NOT NULL,
-                    responsable TEXT DEFAULT '',
-                    descripcion TEXT DEFAULT '',
-                    ultima_fecha_corte TEXT DEFAULT '',
-                    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS public.actividad_movimientos (
-                    id SERIAL PRIMARY KEY,
-                    id_actividad INTEGER NOT NULL,
-                    fecha DATE NOT NULL,
-                    tipo TEXT NOT NULL,
-                    concepto TEXT NOT NULL,
-                    monto NUMERIC(12, 2) NOT NULL DEFAULT 0.0,
-                    condicion TEXT DEFAULT 'Contado',
-                    cliente_deudor TEXT DEFAULT '',
-                    estado_cobro TEXT DEFAULT 'Cobrado',
-                    medio TEXT DEFAULT 'Efectivo',
-                    fondo_destino TEXT DEFAULT 'General',
-                    liquidado INTEGER DEFAULT 0,
-                    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                ALTER TABLE public.actividades ADD COLUMN IF NOT EXISTS ultima_fecha_corte TEXT DEFAULT '';
-            """)
-        conn.commit()
-except Exception:
-    pass
-
 st.subheader("🍲 Gestión de Actividades y Platos Pro-Fondos")
 
-df_act = core.read_db("SELECT * FROM public.actividades ORDER BY date(fecha) DESC, id DESC")
+# Carga de actividades en memoria
+df_act = core.read_db("SELECT id, nombre, fecha, responsable, descripcion, ultima_fecha_corte FROM public.actividades ORDER BY date(fecha) DESC, id DESC")
 
+# Generadores de PDF bajo demanda
 def generar_pdf_acta(nom_act, fecha_corte, cod_corte, df_liq, ing_cont, ing_cred, tot_egr, saldo_neto, tot_cred_pend, resp_act, fondo_dest):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=36, rightMargin=36, topMargin=32, bottomMargin=32)
     elem = []
@@ -123,6 +91,11 @@ def generar_pdf_acta(nom_act, fecha_corte, cod_corte, df_liq, ing_cont, ing_cred
     return buf.getvalue()
 
 def generar_pdf_creditos_pendientes(nom_act, df_creditos, total_pendiente):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=36, rightMargin=36, topMargin=32, bottomMargin=32)
     elem = []
@@ -287,10 +260,9 @@ else:
             with col_tot:
                 st.warning(f"Total pendiente por cobrar: **S/. {total_pend:,.2f}** ({len(df_cp)} deudas pendientes)")
             with col_pdf:
-                pdf_cred_bytes = generar_pdf_creditos_pendientes(act_sel, df_cp, total_pend)
                 st.download_button(
                     "📄 Descargar Cuadro de Deudas en PDF",
-                    data=pdf_cred_bytes,
+                    data=lambda: generar_pdf_creditos_pendientes(act_sel, df_cp, total_pend),
                     file_name=f"Creditos_Pendientes_{id_act}.pdf",
                     mime="application/pdf",
                     type="primary"
