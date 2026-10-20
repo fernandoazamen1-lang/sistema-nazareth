@@ -137,17 +137,6 @@ def requerir_login():
 
             st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
-    else:
-        usuario_actual = st.session_state.get("usuario_actual")
-        if usuario_actual:
-            with st.sidebar:
-                st.markdown(f"👤 **{usuario_actual['nombre']}**")
-                st.caption(f"Rol: {usuario_actual['rol']}")
-                if st.button("🚪 Cerrar Sesión", key="btn_logout_sidebar_global", use_container_width=True):
-                    st.session_state["autenticado"] = False
-                    st.session_state["usuario_actual"] = None
-                    st.rerun()
-                st.markdown("---")
 
 def verificar_acceso_pagina(nombre_modulo: str):
     if not st.session_state.get("autenticado", False):
@@ -287,10 +276,25 @@ def registrar_log(modulo, accion, descripcion):
 def aplicar_estilos_base():
     verificar_licencia()
 
+    # Si no ha iniciado sesión, forzar login
+    if not st.session_state.get("autenticado", False):
+        requerir_login()
+
+    # BOTÓN DE CERRAR SESIÓN Y PERFIL OBLIGATORIO EN EL SIDEBAR
+    usuario_actual = st.session_state.get("usuario_actual")
+    if usuario_actual:
+        with st.sidebar:
+            st.markdown(f"👤 **{usuario_actual.get('nombre', 'Usuario')}**")
+            st.caption(f"Rol: {usuario_actual.get('rol', '')}")
+            if st.button("🚪 Cerrar Sesión", key="btn_logout_sidebar_base", use_container_width=True):
+                st.session_state["autenticado"] = False
+                st.session_state["usuario_actual"] = None
+                st.rerun()
+            st.markdown("---")
+
     css_ocultar_paginas = ""
-    usuario_act = st.session_state.get("usuario_actual")
-    if usuario_act and usuario_act.get("rol") != "Administrador":
-        permisos_raw = usuario_act.get("permisos", "")
+    if usuario_actual and usuario_actual.get("rol") != "Administrador":
+        permisos_raw = usuario_actual.get("permisos", "")
         if "TODOS" not in permisos_raw.upper():
             permisos_user = [p.strip().lower() for p in permisos_raw.split(",") if p.strip()]
 
@@ -481,7 +485,7 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
 """
     st.markdown(css_string, unsafe_allow_html=True)
 
-    # Encabezado superior limpio (sin el bloque de soporte que aparecía en el medio)
+    # ENCABEZADO SUPERIOR LIMPIO Y ELEGANTE (SIN CUADROS MOLESTOS)
     st.markdown("""
 <div style="background: #FFFFFF; padding: 12px 18px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #E2E8F0; box-shadow: 0 2px 5px rgba(15,23,42,0.02); margin-bottom: 22px; flex-wrap: wrap; gap: 8px;">
     <div style="display: flex; align-items: center;">
@@ -499,7 +503,7 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
     """, unsafe_allow_html=True)
 
 def mostrar_pie_pagina():
-    """Llama a esta función al final de cada página para mostrar los créditos y soporte de forma estética y ordenada."""
+    """Muestra el pie de página discreto al final de la pantalla."""
     st.markdown("""
 <div style="margin-top: 50px; margin-bottom: 20px; padding: 14px 20px; background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(8px); border-radius: 12px; border: 1px solid #E2E8F0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 1px 3px rgba(15,23,42,0.02);">
     <div>
