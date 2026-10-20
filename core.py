@@ -1,6 +1,5 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from psycopg2.pool import ThreadedConnectionPool
 import pandas as pd
 from contextlib import contextmanager
 from datetime import datetime, date
@@ -33,41 +32,20 @@ MAPA_MODULOS_SIDEBAR = {
 }
 
 # ==============================================================================
-# POOL PERSISTENTE DE CONEXIONES (ALTA VELOCIDAD Y RESISTENCIA A INACTIVIDAD)
+# GESTIÓN DE CONEXIÓN SEGURA A SUPABASE (DIRECTA Y ESTABLE)
 # ==============================================================================
-@st.cache_resource
-def get_db_pool():
-    url = st.secrets["SUPABASE_DB_URL"]
-    return ThreadedConnectionPool(
-        minconn=1,
-        maxconn=10,
-        dsn=url,
-        cursor_factory=RealDictCursor
-    )
-
 @contextmanager
 def get_db():
-    pool = get_db_pool()
-    conn = pool.getconn()
+    url = st.secrets["SUPABASE_DB_URL"]
+    conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
+    conn.autocommit = True
     try:
-        if conn.closed:
-            pool.putconn(conn, close=True)
-            conn = pool.getconn()
-        else:
-            try:
-                with conn.cursor() as cur_check:
-                    cur_check.execute("SELECT 1;")
-            except Exception:
-                pool.putconn(conn, close=True)
-                conn = pool.getconn()
-
-        conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("SET search_path TO public;")
         yield conn
     finally:
         try:
-            pool.putconn(conn)
+            conn.close()
         except Exception:
             pass
 
