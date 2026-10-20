@@ -138,27 +138,31 @@ def requerir_login():
             st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
     else:
-        try:
-            from streamlit.runtime.scriptrunner import get_script_run_ctx
-            ctx = get_script_run_ctx()
-            current_run_id = ctx.script_run_id if ctx else None
-        except Exception:
-            current_run_id = None
-
-        if current_run_id is not None and st.session_state.get("_ultimo_run_sidebar") == current_run_id:
-            return
-
-        st.session_state["_ultimo_run_sidebar"] = current_run_id
-
         with st.sidebar:
             st.markdown(f"👤 **{st.session_state['usuario_actual']['nombre']}**")
             st.caption(f"Rol: {st.session_state['usuario_actual']['rol']}")
             if st.button("🚪 Cerrar Sesión", key="btn_logout_sidebar_global", use_container_width=True):
                 st.session_state["autenticado"] = False
                 st.session_state["usuario_actual"] = None
-                st.session_state["_ultimo_run_sidebar"] = None
                 st.rerun()
             st.markdown("---")
+
+            # TARJETA OFICIAL PUNBAX
+            st.markdown(
+                """
+                <div style="background: #F8FAFC; border: 1.5px solid #CBD5E1; border-radius: 12px; padding: 12px 10px; text-align: center; margin-top: 15px; box-shadow: 0 2px 6px rgba(15,23,42,0.04);">
+                    <div style="font-weight: 900; color: #1E3A8A; font-size: 15px; letter-spacing: 1.2px;">PUNBAX</div>
+                    <div style="font-size: 11px; color: #64748B; margin-top: 2px;">Sistema de Gestión Eclesiástica</div>
+                    <div style="font-size: 10px; color: #94A3B8; margin-bottom: 10px;">Versión 2.0 • 2026</div>
+                    <div style="font-size: 11px; color: #475569;">Desarrollado por:</div>
+                    <div style="font-size: 12px; font-weight: 800; color: #0F172A; margin-bottom: 8px;">Fernando Azaña Mendoza</div>
+                    <a href="https://wa.me/51936015081?text=Hola%20Fernando,%20necesito%20soporte%20con%20el%20sistema%20Punbax" target="_blank" style="display: block; background-color: #25D366; color: white !important; padding: 7px 10px; border-radius: 8px; text-decoration: none; font-size: 11.5px; font-weight: 700; box-shadow: 0 2px 5px rgba(37,211,102,0.3);">
+                        💬 Soporte: 936-015-081
+                    </a>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
 def verificar_acceso_pagina(nombre_modulo: str):
     """Verifica si el usuario tiene permiso para acceder al módulo."""
@@ -503,26 +507,6 @@ div[data-baseweb="input"] input, div[data-baseweb="select"] {{
 <div style="background: #F1F5F9; padding: 4px 10px; border-radius: 20px; font-size: 10.5px; font-weight: 600; color: #475569; white-space: nowrap;">Cloud</div>
 </div>
     """, unsafe_allow_html=True)
-
-    # Pie de página institucional y créditos en la barra lateral
-    with st.sidebar:
-        st.markdown("---")
-        st.markdown(
-            """
-            <div style="text-align: center; color: #64748B; font-size: 11.5px; line-height: 1.5; padding: 10px 5px;">
-                <b style="color: #1E3A8A; font-size: 14px; letter-spacing: 0.5px;">PUNBAX</b><br/>
-                <span style="font-size: 11px; color: #475569;">Sistema de Gestión Eclesiástica</span><br/>
-                <span style="font-size: 10px; color: #94A3B8;">Versión 2.0 • 2026</span><br/><br/>
-                <span style="color: #64748B;">Desarrollado por:</span><br/>
-                <b style="color: #0F172A; font-size: 12px;">Fernando Azaña Mendoza</b><br/>
-                📞 Soporte Técnico:<br/>
-                <a href="https://wa.me/51936015081?text=Hola%20Fernando,%20necesito%20soporte%20con%20el%20sistema%20Punbax" target="_blank" style="color: #2563EB; text-decoration: none; font-weight: 700;">
-                    936-015-081
-                </a>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
 
 def banner_modulo(icono, titulo, subtitulo, tag_derecha="Módulo Cloud"):
     st.markdown(f"""
