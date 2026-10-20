@@ -50,7 +50,6 @@ def get_db():
     pool = get_db_pool()
     conn = pool.getconn()
     try:
-        # 1. Verificar si la conexión está viva
         if conn.closed:
             pool.putconn(conn, close=True)
             conn = pool.getconn()
@@ -62,7 +61,6 @@ def get_db():
                 pool.putconn(conn, close=True)
                 conn = pool.getconn()
 
-        # 2. Mantener autocommit activo para evitar el error de transacción
         conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("SET search_path TO public;")
@@ -99,7 +97,6 @@ def validar_login(usuario: str, password_plana: str):
                         """,
                         (p_hash, p_hash)
                     )
-                conn.commit()
         except Exception:
             pass
 
@@ -108,9 +105,8 @@ def validar_login(usuario: str, password_plana: str):
             with conn.cursor() as cur:
                 try:
                     cur.execute("ALTER TABLE public.usuarios_sistema ADD COLUMN IF NOT EXISTS permisos TEXT DEFAULT 'TODOS';")
-                    conn.commit()
                 except Exception:
-                    conn.rollback()
+                    pass
 
                 cur.execute(
                     """
@@ -292,7 +288,6 @@ def query_db(query, params=(), commit=True):
                 except Exception:
                     pass
             if commit:
-                conn.commit()
                 st.cache_data.clear()
             return inserted_id
 
