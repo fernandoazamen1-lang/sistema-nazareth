@@ -4,12 +4,8 @@ import os
 import io
 import pandas as pd
 from datetime import date, datetime
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib import colors
 
-# 1. Configuración de página (primera orden de Streamlit)
+# 1. Configuración de página
 st.set_page_config(
     page_title="Padrón de Miembros", 
     page_icon="👥", 
@@ -22,40 +18,6 @@ core.requerir_login()
 core.verificar_acceso_pagina("Miembros")
 core.aplicar_estilos_base()
 
-# ==============================================================================
-# ASEGURAR ESTRUCTURA DE TABLA EN ESQUEMA PUBLIC (POSTGRESQL)
-# ==============================================================================
-try:
-    with core.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS public.miembros (
-                    id_miembro TEXT PRIMARY KEY,
-                    nombre TEXT NOT NULL,
-                    telefono TEXT DEFAULT '',
-                    direccion TEXT DEFAULT '',
-                    fecha_nacimiento TEXT DEFAULT '',
-                    estado_civil TEXT DEFAULT 'Soltero(a)',
-                    bautizado TEXT DEFAULT 'No',
-                    miembro_pleno TEXT DEFAULT 'No',
-                    cargo_eclesiastico TEXT DEFAULT 'Miembro Activo',
-                    foto TEXT DEFAULT '',
-                    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '';
-                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS direccion TEXT DEFAULT '';
-                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS fecha_nacimiento TEXT DEFAULT '';
-                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS estado_civil TEXT DEFAULT 'Soltero(a)';
-                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS bautizado TEXT DEFAULT 'No';
-                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS miembro_pleno TEXT DEFAULT 'No';
-                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS cargo_eclesiastico TEXT DEFAULT 'Miembro Activo';
-                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS foto TEXT DEFAULT '';
-                ALTER TABLE public.miembros ADD COLUMN IF NOT EXISTS fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-            """)
-        conn.commit()
-except Exception:
-    pass
-
 st.subheader("👥 Padrón General de Miembros")
 
 opcion = st.radio(
@@ -66,7 +28,9 @@ opcion = st.radio(
 
 st.markdown("---")
 
-# Obtener miembros registrados
+# ==============================================================================
+# CARGA DE DATOS EN MEMORIA (OPTIMIZADA)
+# ==============================================================================
 df_m = core.read_db("""
     SELECT 
         ROW_NUMBER() OVER(ORDER BY id_miembro ASC) AS nro_orden, 
@@ -90,9 +54,14 @@ LISTA_CARGOS = [
 ]
 
 # ==============================================================================
-# GENERADORES DE REPORTES (PDF Y EXCEL)
+# GENERADORES DE REPORTES (BAJO DEMANDA)
 # ==============================================================================
 def generar_pdf_padron(df_exportar, columnas_visibles):
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=20, rightMargin=20, topMargin=25, bottomMargin=25)
     elementos = []
@@ -211,7 +180,8 @@ if opcion == "Ver Miembros":
             with col_b2:
                 filtro_baut = st.selectbox("Bautismo:", ["Todos", "Sí", "No"])
             with col_b3:
-                filtro_cargo = st.selectbox("Cargo:", ["Todos"] + sorted(list(df_mostrar["Cargo Eclesiástico"].dropna().unique())))
+                cargos_unicos = sorted([str(c) for c in df_mostrar["Cargo Eclesiástico"].dropna().unique() if str(c).strip()])
+                filtro_cargo = st.selectbox("Cargo:", ["Todos"] + cargos_unicos)
 
             st.markdown("##### 🎛️ Columnas a mostrar en Pantalla, PDF y Excel:")
             opciones_columnas = list(mapa_cols.values())
@@ -221,7 +191,7 @@ if opcion == "Ver Miembros":
                 default=["DNI / Código", "Nombres y Apellidos", "Teléfono", "Estado Civil", "Bautizado", "Cargo Eclesiástico"]
             )
 
-        df_filtrado = df_mostrar.copy()
+        df_filtrado = df_mostrar
         if buscar_txt.strip():
             df_filtrado = df_filtrado[
                 df_filtrado["Nombres y Apellidos"].astype(str).str.contains(buscar_txt, case=False, na=False) |
@@ -240,19 +210,17 @@ if opcion == "Ver Miembros":
         col_pdf, col_xls, _ = st.columns([3, 3, 4])
         with col_pdf:
             if columnas_seleccionadas and not df_filtrado.empty:
-                pdf_bytes = generar_pdf_padron(df_filtrado, columnas_seleccionadas)
                 st.download_button(
                     label="📄 Descargar Padrón en PDF",
-                    data=pdf_bytes,
+                    data=lambda: generar_pdf_padron(df_filtrado, columnas_seleccionadas),
                     file_name=f"Padron_Nazareth_{date.today()}.pdf",
                     mime="application/pdf"
                 )
         with col_xls:
             if columnas_seleccionadas and not df_filtrado.empty:
-                excel_bytes = generar_excel_bytes(df_filtrado[cols_finales])
                 st.download_button(
                     label="📊 Descargar Padrón en Excel (.xlsx)",
-                    data=excel_bytes,
+                    data=lambda: generar_excel_bytes(df_filtrado[cols_finales]),
                     file_name=f"Padron_Miembros_Nazareth_{date.today()}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary"
@@ -442,7 +410,6 @@ elif opcion == "✏️ Editar Miembro":
                         ruta_foto_final, dni_actual
                     ))
 
-                    # Si cambió el DNI o el nombre, sincronizar en el historial de diezmos
                     if dni_actual != edit_id.strip() or datos_actuales["nombre"] != edit_nom.strip():
                         core.query_db("""
                             UPDATE public.diezmos 
@@ -457,7 +424,7 @@ elif opcion == "✏️ Editar Miembro":
                     st.error(f"Error al actualizar en la base de datos: {e_db}")
 
 # ==============================================================================
-# VISTA 4: CARGA MASIVA (EXCEL)
+# VISTA 4: CARGA MASIVA (EXCEL EN LOTE ÚNICO)
 # ==============================================================================
 elif opcion == "📥 Carga Masiva (Excel)":
     st.markdown("#### 📥 Importación Masiva de Miembros desde Archivo Excel")
@@ -465,10 +432,9 @@ elif opcion == "📥 Carga Masiva (Excel)":
 
     col_desc_plan, _ = st.columns([3, 4])
     with col_desc_plan:
-        plantilla_bytes = generar_plantilla_excel()
         st.download_button(
             label="📄 Descargar Plantilla Excel (.xlsx)",
-            data=plantilla_bytes,
+            data=generar_plantilla_excel,
             file_name="plantilla_miembros_nazareth.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
@@ -481,27 +447,15 @@ elif opcion == "📥 Carga Masiva (Excel)":
             df_import = pd.read_excel(archivo_excel)
             df_import.columns = [str(c).strip().replace(" ", "_") for c in df_import.columns]
 
-            mapa_import = {
-                "DNI_Codigo": "id_miembro",
-                "Nombres_y_Apellidos": "nombre",
-                "Telefono": "telefono",
-                "Direccion": "direccion",
-                "Fecha_Nacimiento": "fecha_nacimiento",
-                "Estado_Civil": "estado_civil",
-                "Bautizado": "bautizado",
-                "Miembro_Pleno": "miembro_pleno",
-                "Cargo_Eclesiastico": "cargo_eclesiastico"
-            }
-
-            columnas_presentes = [c for c in mapa_import.keys() if c in df_import.columns]
-            if "DNI_Codigo" not in columnas_presentes or "Nombres_y_Apellidos" not in columnas_presentes:
+            columnas_presentes = [c for c in ["DNI_Codigo", "Nombres_y_Apellidos"] if c in df_import.columns]
+            if len(columnas_presentes) < 2:
                 st.error("❌ El archivo no contiene las columnas obligatorias: `DNI_Codigo` y `Nombres_y_Apellidos`.")
             else:
                 st.markdown(f"##### 📋 Vista Previa de Registros a Importar ({len(df_import)} filas):")
                 st.dataframe(df_import, use_container_width=True)
 
                 if st.button("🚀 Confirmar e Importar al Padrón", type="primary"):
-                    registros_nuevos = 0
+                    registros_para_insertar = []
                     registros_omitidos = 0
 
                     for _, fila in df_import.iterrows():
@@ -539,27 +493,35 @@ elif opcion == "📥 Carga Masiva (Excel)":
                         d_cargo = str(fila.get("Cargo_Eclesiastico", "Miembro Activo")).strip()
                         d_cargo = "Miembro Activo" if d_cargo.lower() == "nan" or not d_cargo else d_cargo
 
-                        core.query_db("""
-                            INSERT INTO public.miembros 
-                            (id_miembro, nombre, telefono, direccion, fecha_nacimiento, estado_civil, bautizado, miembro_pleno, cargo_eclesiastico, foto)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '')
-                            ON CONFLICT (id_miembro) DO UPDATE SET
-                            nombre = EXCLUDED.nombre,
-                            telefono = EXCLUDED.telefono,
-                            direccion = EXCLUDED.direccion,
-                            fecha_nacimiento = EXCLUDED.fecha_nacimiento,
-                            estado_civil = EXCLUDED.estado_civil,
-                            bautizado = EXCLUDED.bautizado,
-                            miembro_pleno = EXCLUDED.miembro_pleno,
-                            cargo_eclesiastico = EXCLUDED.cargo_eclesiastico
-                        """, (
-                            d_id, d_nom, d_tel, d_dir, d_fnac, d_civil, d_baut, d_pleno, d_cargo
+                        registros_para_insertar.append((
+                            d_id, d_nom, d_tel, d_dir, d_fnac, d_civil, d_baut, d_pleno, d_cargo, ''
                         ))
-                        registros_nuevos += 1
 
-                    core.registrar_log("Miembros", "Carga Masiva", f"Importados/actualizados {registros_nuevos} miembros.")
-                    st.success(f"✅ ¡Carga completada con éxito! Se procesaron {registros_nuevos} registros (Omitidos: {registros_omitidos}).")
-                    st.rerun()
+                    if registros_para_insertar:
+                        with core.get_db() as conn:
+                            with conn.cursor() as cur:
+                                from psycopg2.extras import execute_batch
+                                sql_upsert = """
+                                    INSERT INTO public.miembros 
+                                    (id_miembro, nombre, telefono, direccion, fecha_nacimiento, estado_civil, bautizado, miembro_pleno, cargo_eclesiastico, foto)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    ON CONFLICT (id_miembro) DO UPDATE SET
+                                    nombre = EXCLUDED.nombre,
+                                    telefono = EXCLUDED.telefono,
+                                    direccion = EXCLUDED.direccion,
+                                    fecha_nacimiento = EXCLUDED.fecha_nacimiento,
+                                    estado_civil = EXCLUDED.estado_civil,
+                                    bautizado = EXCLUDED.bautizado,
+                                    miembro_pleno = EXCLUDED.miembro_pleno,
+                                    cargo_eclesiastico = EXCLUDED.cargo_eclesiastico
+                                """
+                                execute_batch(cur, sql_upsert, registros_para_insertar, page_size=100)
+                            conn.commit()
+                        st.cache_data.clear()
+
+                        core.registrar_log("Miembros", "Carga Masiva", f"Importados en lote {len(registros_para_insertar)} miembros.")
+                        st.success(f"✅ ¡Carga completada con éxito! Se procesaron {len(registros_para_insertar)} registros (Omitidos: {registros_omitidos}).")
+                        st.rerun()
         except Exception as e:
             st.error(f"Error al leer el archivo Excel: {e}")
 
@@ -574,7 +536,6 @@ elif opcion == "Eliminar Miembro":
         m_del = st.selectbox("Seleccione el Miembro que desea retirar del padrón:", df_m["nombre"].tolist())
         datos_del = df_m[df_m["nombre"] == m_del].iloc[0]
         
-        # Comprobar si tiene registros en diezmos
         df_tiene_dz = core.read_db("SELECT COUNT(*) AS cant FROM public.diezmos WHERE id_miembro = ?", (datos_del["id_miembro"],))
         cant_dz = int(df_tiene_dz.iloc[0]["cant"]) if not df_tiene_dz.empty else 0
 
