@@ -483,4 +483,6 @@ if not df_mov.empty:
     )
 else:
     st.info("Aún no hay movimientos registrados en Tesorería.")
-    core.mostrar_pie_pagina()
+
+# Pie de página colocado al final absoluto de la pantalla
+core.mostrar_pie_pagina()
