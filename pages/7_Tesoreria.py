@@ -5,13 +5,8 @@ import pandas as pd
 import numpy as np
 from datetime import date, datetime
 import plotly.graph_objects as go
-from reportlab.lib.pagesizes import landscape, letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib import colors
-from reportlab.graphics.shapes import Drawing, Rect, String, Line
 
-# 1. Configuración de página (primera orden de Streamlit)
+# 1. Configuración de página
 st.set_page_config(
     page_title="Tesorería y Movimientos", 
     page_icon="🏛️", 
@@ -25,7 +20,7 @@ core.aplicar_estilos_base()
 
 st.subheader("🏛️ Libro de Tesorería y Movimientos")
 
-# Navegación limpia por puntos estándar
+# Navegación limpia
 opcion = st.radio(
     "Sección:", 
     ["Libro Detallado", "Evolución y Gráficos", "Registrar Movimiento", "⚙️ Modificar o Eliminar"], 
@@ -34,12 +29,22 @@ opcion = st.radio(
 
 st.markdown("---")
 
-# Catálogos base
-df_fondos = core.read_db("SELECT nombre FROM public.fondos_catalogo ORDER BY id ASC")
-fondos = df_fondos["nombre"].tolist() if not df_fondos.empty else ["General"]
+# ==============================================================================
+# CARGA DE CATÁLOGOS BASE EN MEMORIA (OPTIMIZADA)
+# ==============================================================================
+@st.cache_data(ttl=120, show_spinner=False)
+def cargar_catalogos_tesoreria():
+    df_f = core.read_db("SELECT nombre FROM public.fondos_catalogo ORDER BY id ASC")
+    f_list = df_f["nombre"].tolist() if not df_f.empty else ["General"]
+    
+    df_r = core.read_db("SELECT nombre FROM public.responsables_catalogo ORDER BY nombre ASC")
+    r_list = df_r["nombre"].tolist() if not df_r.empty else ["Tesorero"]
+    return f_list, r_list
+
+fondos, resps = cargar_catalogos_tesoreria()
 
 # ==============================================================================
-# MOTOR DE REPORTES PDF Y EXCEL DINÁMICOS
+# MOTOR DE REPORTES PDF Y EXCEL (BAJO DEMANDA)
 # ==============================================================================
 MAP_COLUMNAS_INFO = {
     "Fecha": ("fecha", 60, 'CENTER'),
@@ -55,6 +60,11 @@ MAP_COLUMNAS_INFO = {
 }
 
 def generar_pdf_libro_caja_dinamico(df_reporte, cols_visibles, tot_i, tot_e, saldo_n, filtros_txt=""):
+    from reportlab.lib.pagesizes import landscape, letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=25, rightMargin=25, topMargin=25, bottomMargin=25)
     elem = []
@@ -202,6 +212,9 @@ def agregar_tendencia_plotly(fig, x_labels, y_vals, nombre="Tendencia / Proyecci
     ))
 
 def dibujar_grafico_vectorial_pdf(titulo, x_labels, y_vals, color_hex, y_tendencia=None):
+    from reportlab.graphics.shapes import Drawing, Rect, String, Line
+    from reportlab.lib import colors
+
     d = Drawing(740, 185)
     d.add(Rect(0, 0, 740, 185, fillColor=colors.HexColor("#F8FAFC"), strokeColor=colors.HexColor("#CBD5E1"), strokeWidth=1, rx=6, ry=6))
     d.add(String(20, 165, titulo, fontName="Helvetica-Bold", fontSize=10, fillColor=colors.HexColor("#0F172A")))
@@ -248,6 +261,11 @@ def render_chart_para_pdf(fig, titulo, x_labels, y_vals, color_hex, y_tendencia)
         return dibujar_grafico_vectorial_pdf(titulo, x_labels, y_vals, color_hex, y_tendencia)
 
 def generar_pdf_cuadros_graficos(anio_sel, medio_sel, fig1, fig2, fig3, fig4, y1, y2, y3, y4, tot_i, tot_e, tot_dz, sal_acum):
+    from reportlab.lib.pagesizes import landscape, letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=25, rightMargin=25, topMargin=25, bottomMargin=25)
     elem = []
@@ -316,10 +334,10 @@ def generar_pdf_cuadros_graficos(anio_sel, medio_sel, fig1, fig2, fig3, fig4, y1
     return buf.getvalue()
 
 # ==============================================================================
-# 1. LIBRO DETALLADO CON FILTROS FLOTANTES Y SELECTOR DE COLUMNAS
+# 1. LIBRO DETALLADO CON FILTROS Y SELECTOR DE COLUMNAS
 # ==============================================================================
 if opcion == "Libro Detallado":
-    df_mov = core.read_db("SELECT * FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
+    df_mov = core.read_db("SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
     
     if df_mov.empty:
         st.info("No hay movimientos registrados en el libro de Tesorería.")
@@ -328,7 +346,6 @@ if opcion == "Libro Detallado":
         df_mov["anio"] = df_mov["dt"].dt.year
         df_mov["mes_num"] = df_mov["dt"].dt.month
 
-        # PANEL FLOTANTE DE FILTRADO DE DATOS
         with st.expander("🔎 Opciones de Filtrado de Movimientos (Filas)", expanded=True):
             f1, f2, f3, f4 = st.columns(4)
             with f1:
@@ -350,8 +367,7 @@ if opcion == "Libro Detallado":
             with f7:
                 filtro_txt = st.text_input("Búsqueda Rápida:", placeholder="Buscar por detalle, comprobante o responsable...")
 
-        # SELECTOR FLOTANTE DE COLUMNAS VISIBLES
-        with st.expander("👁️ Selector Flotante de Columnas Visibles (Agregar / Quitar según tu selección)", expanded=True):
+        with st.expander("👁️ Selector Flotante de Columnas Visibles", expanded=True):
             todas_las_columnas = list(MAP_COLUMNAS_INFO.keys())
             cols_seleccionadas = st.multiselect(
                 "Marca o desmarca las columnas que deseas visualizar y exportar:",
@@ -363,7 +379,7 @@ if opcion == "Libro Detallado":
             st.warning("⚠️ Debes seleccionar al menos una columna para mostrar la tabla.")
             cols_seleccionadas = ["Fecha", "Tipo", "Monto (S/.)"]
 
-        df_fil = df_mov.copy()
+        df_fil = df_mov
         filtros_activos = []
 
         if filtro_anio != "Todos":
@@ -412,20 +428,18 @@ if opcion == "Libro Detallado":
         col_pdf, col_xls, col_info = st.columns([2.5, 2.5, 4])
         with col_pdf:
             if not df_fil.empty:
-                pdf_bytes = generar_pdf_libro_caja_dinamico(df_fil, cols_seleccionadas, tot_ing, tot_egr, saldo_neto, txt_filtros_resumen)
                 st.download_button(
                     label="📄 Descargar PDF (Columnas y Filtros Actuales)",
-                    data=pdf_bytes,
+                    data=lambda: generar_pdf_libro_caja_dinamico(df_fil, cols_seleccionadas, tot_ing, tot_egr, saldo_neto, txt_filtros_resumen),
                     file_name=f"Libro_Caja_{date.today()}.pdf",
                     mime="application/pdf",
                     use_container_width=True
                 )
         with col_xls:
             if not df_fil.empty:
-                excel_bytes = generar_excel_dinamico(df_fil, cols_seleccionadas)
                 st.download_button(
                     label="📊 Descargar Excel (Columnas y Filtros Actuales)",
-                    data=excel_bytes,
+                    data=lambda: generar_excel_dinamico(df_fil, cols_seleccionadas),
                     file_name=f"Libro_Caja_{date.today()}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary",
@@ -451,14 +465,13 @@ if opcion == "Libro Detallado":
         )
 
 # ==============================================================================
-# 2. EVOLUCIÓN Y GRÁFICOS (EXCLUYENDO ASIENTOS DE APERTURA)
+# 2. EVOLUCIÓN Y GRÁFICOS
 # ==============================================================================
 elif opcion == "Evolución y Gráficos":
-    # Exclusión de asientos de apertura para reflejar solo ingresos y gastos operativos
     df_mov = core.read_db("""
         SELECT fecha, tipo, monto, medio 
         FROM public.movimientos 
-        WHERE comprobante NOT LIKE 'ASIENTO-APERTURA%' AND fecha IS NOT NULL
+        WHERE comprobante NOT LIKE 'ASIENTO-APERTURA%%' AND fecha IS NOT NULL
     """)
     
     if df_mov.empty:
@@ -496,9 +509,7 @@ elif opcion == "Evolución y Gráficos":
         y_egresos = pivot_m["Egreso"].values
         y_saldos = pivot_m["Saldo"].values
 
-        # ----------------------------------------------------------------------
-        # CUADRO 1: INGRESOS OPERATIVOS
-        # ----------------------------------------------------------------------
+        # CUADRO 1: INGRESOS
         fig_ing = go.Figure()
         fig_ing.add_trace(go.Bar(
             name="Ingresos Mensuales", 
@@ -516,9 +527,7 @@ elif opcion == "Evolución y Gráficos":
         )
         st.plotly_chart(fig_ing, use_container_width=True)
 
-        # ----------------------------------------------------------------------
-        # CUADRO 2: EGRESOS Y GASTOS
-        # ----------------------------------------------------------------------
+        # CUADRO 2: EGRESOS
         fig_egr = go.Figure()
         fig_egr.add_trace(go.Bar(
             name="Egresos Mensuales", 
@@ -536,9 +545,7 @@ elif opcion == "Evolución y Gráficos":
         )
         st.plotly_chart(fig_egr, use_container_width=True)
 
-        # ----------------------------------------------------------------------
-        # CUADRO 3: EVOLUCIÓN HISTÓRICA DE DIEZMOS
-        # ----------------------------------------------------------------------
+        # CUADRO 3: DIEZMOS
         df_dz_bd = core.read_db("SELECT fecha, monto FROM public.diezmos WHERE fecha IS NOT NULL")
         if not df_dz_bd.empty:
             df_dz_bd["dt"] = pd.to_datetime(df_dz_bd["fecha"], errors="coerce")
@@ -567,9 +574,7 @@ elif opcion == "Evolución y Gráficos":
         )
         st.plotly_chart(fig_dz, use_container_width=True)
 
-        # ----------------------------------------------------------------------
-        # CUADRO 4: SALDOS NETOS REMANENTES POR MES
-        # ----------------------------------------------------------------------
+        # CUADRO 4: SALDOS OPERATIVOS
         colores_sal = ["#1E3A8A" if s >= 0 else "#DC2626" for s in y_saldos]
         fig_sal = go.Figure()
         fig_sal.add_trace(go.Bar(
@@ -588,25 +593,23 @@ elif opcion == "Evolución y Gráficos":
         )
         st.plotly_chart(fig_sal, use_container_width=True)
 
-        # DESCARGA DE REPORTE GRÁFICO EN PDF
+        # DESCARGA DE REPORTE GRÁFICO (BAJO DEMANDA)
         st.markdown("---")
         tot_i_graf = float(np.sum(y_ingresos))
         tot_e_graf = float(np.sum(y_egresos))
         tot_dz_graf = float(np.sum(y_diezmos))
         sal_acum_graf = tot_i_graf - tot_e_graf
 
-        pdf_graficos_bytes = generar_pdf_cuadros_graficos(
-            anio_graf, filtro_medio_graf, 
-            fig_ing, fig_egr, fig_dz, fig_sal,
-            y_ingresos, y_egresos, y_diezmos, y_saldos,
-            tot_i_graf, tot_e_graf, tot_dz_graf, sal_acum_graf
-        )
-
         col_b_g, _ = st.columns([3, 4])
         with col_b_g:
             st.download_button(
                 label=f"📄 Descargar los 4 Gráficos y Proyecciones en PDF ({anio_graf})",
-                data=pdf_graficos_bytes,
+                data=lambda: generar_pdf_cuadros_graficos(
+                    anio_graf, filtro_medio_graf, 
+                    fig_ing, fig_egr, fig_dz, fig_sal,
+                    y_ingresos, y_egresos, y_diezmos, y_saldos,
+                    tot_i_graf, tot_e_graf, tot_dz_graf, sal_acum_graf
+                ),
                 file_name=f"Reporte_Graficos_Tesoreria_{anio_graf}.pdf",
                 mime="application/pdf",
                 type="primary",
@@ -627,9 +630,6 @@ elif opcion == "Registrar Movimiento":
             dict_c[c] = g["subcategoria"].tolist()
     else:
         dict_c = {"General": ["General"]}
-
-    df_r = core.read_db("SELECT nombre FROM public.responsables_catalogo ORDER BY nombre ASC")
-    resps = df_r["nombre"].tolist() if not df_r.empty else ["Tesorero"]
 
     anio, mes, num_m, f_sug = core.selector_periodo("mov_reg")
 
@@ -662,7 +662,7 @@ elif opcion == "Registrar Movimiento":
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### ⚙️ Gestión de Asientos de Tesorería (Modificar o Eliminar)")
-    df_todos_mov = core.read_db("SELECT * FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
+    df_todos_mov = core.read_db("SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
 
     if df_todos_mov.empty:
         st.info("No hay transacciones registradas en Tesorería.")
@@ -683,7 +683,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
             with col_f4:
                 b_tipo = st.selectbox("Tipo:", ["Todos", "Ingreso", "Egreso"], index=0)
 
-        df_filtrado_mov = df_todos_mov.copy()
+        df_filtrado_mov = df_todos_mov
         if b_txt.strip():
             t_l = b_txt.strip().lower()
             df_filtrado_mov = df_filtrado_mov[
@@ -706,7 +706,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
         else:
             def label_mov(r):
                 c_str = f" | Comp: {r['comprobante']}" if r.get('comprobante') else ""
-                return f"ID #{r['id']} [{r['fecha']}] {r['tipo']} — S/. {float(r['monto']):,.2f} ({r['detalle'][:30]}){c_str}"
+                return f"ID #{r['id']} [{r['fecha']}] {r['tipo']} — S/. {float(r['monto']):,.2f} ({str(r['detalle'])[:30]}){c_str}"
 
             opciones_mov_dict = {label_mov(r): r["id"] for _, r in df_filtrado_mov.iterrows()}
             st.markdown("---")
@@ -724,10 +724,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
 
                 idx_fnd = fondos.index(reg_mov["fondo"]) if reg_mov["fondo"] in fondos else 0
                 idx_med = core.MEDIOS.index(reg_mov["medio"]) if reg_mov["medio"] in core.MEDIOS else 0
-
-                df_r_act = core.read_db("SELECT nombre FROM public.responsables_catalogo ORDER BY nombre ASC")
-                resps_act = df_r_act["nombre"].tolist() if not df_r_act.empty else ["Tesorero"]
-                idx_resp = resps_act.index(reg_mov["responsable"]) if reg_mov["responsable"] in resps_act else 0
+                idx_resp = resps.index(reg_mov["responsable"]) if reg_mov["responsable"] in resps else 0
 
                 with st.form("form_editar_mov"):
                     st.info(f"Modificando Asiento ID #{reg_mov['id']} — Tipo actual: **{reg_mov['tipo']}**")
@@ -742,7 +739,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                         e_fondo = st.selectbox("Fondo:", fondos, index=idx_fnd)
                         e_medio = st.selectbox("Medio de Pago:", core.MEDIOS, index=idx_med)
                         e_comp = st.text_input("Comprobante / N° Recibo / Voucher:", value=str(reg_mov.get("comprobante", "") or ""))
-                        e_resp = st.selectbox("Responsable:", resps_act, index=idx_resp)
+                        e_resp = st.selectbox("Responsable:", resps, index=idx_resp)
                         e_det = st.text_area("Detalle / Observación:", value=str(reg_mov.get("detalle", "") or ""))
 
                     btn_guardar_mov = st.form_submit_button("💾 Guardar Cambios en Tesorería", type="primary")
