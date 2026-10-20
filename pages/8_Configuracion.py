@@ -7,18 +7,17 @@ import calendar
 import pandas as pd
 from datetime import date
 
-# 1. Configuración de página (primera orden de Streamlit)
+# 1. Configuración de página
 st.set_page_config(
     page_title="Configuración General", 
     page_icon="⚙️", 
     layout="wide"
 )
 
-# 2. Seguridad: Verificar que el usuario tenga acceso a Configuración
+# 2. Seguridad: Verificar acceso
 core.verificar_acceso_pagina("Configuración")
 core.aplicar_estilos_base()
 
-# LISTA COMPLETA Y EXACTA DE TODOS LOS MÓDULOS DEL SISTEMA
 TODOS_LOS_MODULOS = [
     "Panel Principal",
     "Miembros",
@@ -31,59 +30,21 @@ TODOS_LOS_MODULOS = [
     "Configuración"
 ]
 
-# 3. Estructura de tablas y permisos en PostgreSQL
-try:
-    with core.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS public.config_iglesia (
-                    clave TEXT PRIMARY KEY,
-                    valor TEXT
-                );
-                CREATE TABLE IF NOT EXISTS public.cierres_mensuales (
-                    periodo TEXT PRIMARY KEY,
-                    fecha_cierre TEXT,
-                    estado TEXT DEFAULT 'Abierto',
-                    saldo_cierre NUMERIC(12, 2) DEFAULT 0.0,
-                    usuario TEXT DEFAULT 'Tesorería General'
-                );
-                ALTER TABLE public.cierres_mensuales ADD COLUMN IF NOT EXISTS saldo_cierre NUMERIC(12, 2) DEFAULT 0.0;
-                ALTER TABLE public.cierres_mensuales ADD COLUMN IF NOT EXISTS usuario TEXT DEFAULT 'Tesorería General';
+# ==============================================================================
+# CARGA DE CONFIGURACIÓN PERSISTENTE EN MEMORIA (OPTIMIZADA)
+# ==============================================================================
+@st.cache_data(ttl=120, show_spinner=False)
+def cargar_todas_las_configs():
+    try:
+        df_c = core.read_db("SELECT clave, valor FROM public.config_iglesia")
+        return dict(zip(df_c["clave"], df_c["valor"])) if not df_c.empty else {}
+    except Exception:
+        return {}
 
-                CREATE TABLE IF NOT EXISTS public.responsables_catalogo (
-                    id SERIAL PRIMARY KEY,
-                    nombre TEXT UNIQUE NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS public.fondos_catalogo (
-                    id SERIAL PRIMARY KEY,
-                    nombre TEXT UNIQUE NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS public.rubros_catalogo (
-                    id SERIAL PRIMARY KEY,
-                    tipo TEXT NOT NULL,
-                    categoria TEXT NOT NULL,
-                    subcategoria TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS public.usuarios_sistema (
-                    id SERIAL PRIMARY KEY,
-                    usuario TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    nombre TEXT NOT NULL,
-                    rol TEXT NOT NULL,
-                    activo BOOLEAN DEFAULT TRUE,
-                    permisos TEXT DEFAULT 'Panel Principal,Diezmos,Tesorería',
-                    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                ALTER TABLE public.usuarios_sistema ADD COLUMN IF NOT EXISTS permisos TEXT DEFAULT 'Panel Principal,Diezmos,Tesorería';
-                INSERT INTO public.fondos_catalogo (nombre) VALUES ('General') ON CONFLICT (nombre) DO NOTHING;
-            """)
-        conn.commit()
-except Exception:
-    pass
+dict_config_global = cargar_todas_las_configs()
 
 def get_config(clave, default=""):
-    df = core.read_db("SELECT valor FROM public.config_iglesia WHERE clave=?", (clave,))
-    return df.iloc[0]["valor"] if not df.empty else default
+    return dict_config_global.get(clave, default)
 
 def set_config(clave, valor):
     core.query_db("""
@@ -132,7 +93,6 @@ st.subheader("⚙️ Configuración y Administración del Sistema")
 rol_actual = st.session_state.get("usuario_actual", {}).get("rol", "")
 es_administrador = (rol_actual == "Administrador")
 
-# Respaldo y Usuarios solo aparecen para el Administrador General
 if es_administrador:
     secciones_configuracion = [
         "🏛️ Parámetros y Catálogos",
@@ -307,7 +267,7 @@ if seccion_cfg == "🏛️ Parámetros y Catálogos":
                         st.rerun()
 
 # ==============================================================================
-# 2. CIERRES DE MES CON ASIENTOS DE APERTURA AUTOMÁTICOS
+# 2. CIERRES DE MES Y AUDITORÍA
 # ==============================================================================
 elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
     col_cierre, col_aud = st.columns([1, 1])
@@ -378,7 +338,7 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
         m1.metric("Ingresos Operativos", f"S/. {ing_op:,.2f}")
         m2.metric("Egresos del Mes", f"S/. {egr_op:,.2f}")
 
-        st.markdown("##### 💰 Arqueo de Saldos al Cierre (a trasladar al mes siguiente):")
+        st.markdown("##### 💰 Arqueo de Saldos al Cierre:")
         c_s1, c_s2, c_s3 = st.columns(3)
         c_s1.metric("💵 Saldo en Efectivo", f"S/. {sal_efe:,.2f}")
         c_s2.metric("🏦 Saldo en Bancos", f"S/. {sal_ban:,.2f}")
@@ -453,7 +413,7 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
             st.info(f"Asientos de apertura vigentes en Tesorería para **{fecha_apertura_sig}**:\n- 💵 Efectivo: `{c_efe_sig}`\n- 🏦 Bancos: `{c_ban_sig}`")
 
             with st.expander("🔓 Reapertura Extraordinaria del Periodo"):
-                st.warning("⚠️ Al reabrir este periodo, los asientos de apertura generados en el mes siguiente se eliminarán temporalmente para evitar inconsistencias.")
+                st.warning("⚠️ Al reabrir este periodo, los asientos de apertura generados en el mes siguiente se eliminarán temporalmente.")
                 mot = st.text_input("Motivo fundamentado para reabrir el mes:")
                 if st.button("Confirmar Reapertura y Eliminar Aperturas Siguientes", type="secondary"):
                     if mot.strip():
@@ -467,7 +427,7 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
 
     with col_aud:
         st.markdown("#### 🛡️ Registro de Auditoría y Trazabilidad")
-        df_aud = core.read_db("SELECT * FROM public.auditoria ORDER BY id DESC LIMIT 300")
+        df_aud = core.read_db("SELECT fecha_hora, modulo, accion, descripcion FROM public.auditoria ORDER BY id DESC LIMIT 300")
         if df_aud.empty:
             st.info("Sin registros de auditoría por el momento.")
         else:
@@ -478,7 +438,7 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
             with c_au2:
                 b_aud = st.text_input("Buscar en el Detalle:")
 
-            df_aud_f = df_aud.copy()
+            df_aud_f = df_aud
             if f_mod != "Todos":
                 df_aud_f = df_aud_f[df_aud_f["modulo"] == f_mod]
             if b_aud.strip():
@@ -492,30 +452,32 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
                 hide_index=True
             )
 
-            out_aud = io.BytesIO()
-            with pd.ExcelWriter(out_aud, engine='openpyxl') as w:
-                df_aud_f.to_excel(w, index=False, sheet_name="Auditoria")
+            def generar_excel_auditoria():
+                out_aud = io.BytesIO()
+                with pd.ExcelWriter(out_aud, engine='openpyxl') as w:
+                    df_aud_f.to_excel(w, index=False, sheet_name="Auditoria")
+                return out_aud.getvalue()
+
             st.download_button(
                 label="📊 Exportar Auditoría a Excel (.xlsx)", 
-                data=out_aud.getvalue(), 
+                data=generar_excel_auditoria, 
                 file_name=f"Auditoria_Nazareth_{date.today()}.xlsx", 
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
 # ==============================================================================
-# 3. RESPALDO Y BASE DE DATOS (SOLO ADMINISTRADOR)
+# 3. RESPALDO Y BASE DE DATOS (SOLO ADMINISTRADOR - BAJO DEMANDA)
 # ==============================================================================
 elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
     c_b1, c_b2 = st.columns(2)
 
     with c_b1:
         st.markdown("#### 📦 Copia de Seguridad Integral a Excel (.xlsx)")
-        st.caption("Descarga todas las tablas de tu base de datos en un único archivo Excel con pestañas independientes (Miembros, Diezmos, Movimientos, Fondos, Rubros, Cierres y Auditoría).")
+        st.caption("Descarga todas las tablas de tu base de datos en un único archivo Excel con pestañas independientes.")
         
-        backup_excel_bytes = generar_backup_completo_excel()
         st.download_button(
             label="📊 Descargar Backup Completo de Base de Datos (.xlsx)",
-            data=backup_excel_bytes,
+            data=generar_backup_completo_excel,
             file_name=f"Backup_Total_Nazareth_{date.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
@@ -523,12 +485,12 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
         )
 
         st.markdown("---")
-        st.markdown("#### 📁 Copia de Archivos en la Nube (.ZIP)")
-        st.caption("Empaqueta fotos de miembros y comprobantes almacenados en el servidor.")
-        bk_bytes = crear_backup_archivos_zip()
+        st.markdown("#### 📁 Copia de Archivos Locales (.ZIP)")
+        st.caption("Empaqueta fotos y comprobantes almacenados en el servidor.")
+        
         st.download_button(
             label="📦 Descargar Archivos Locales (.ZIP)",
-            data=bk_bytes,
+            data=crear_backup_archivos_zip,
             file_name=f"Archivos_Nazareth_{date.today().strftime('%Y%m%d')}.zip",
             mime="application/zip",
             use_container_width=True
@@ -549,8 +511,8 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
 
     with c_b2:
         st.markdown("#### ⚠️ Formateo de Cero / Reset de Fábrica")
-        st.caption("Vacía por completo los datos de movimientos, diezmos y registros en Supabase, conservando intactos tus usuarios y configuración institucional.")
-        st.error("Esta acción eliminará de forma irreversible movimientos, diezmos, actividades y compromisos en la base de datos.")
+        st.caption("Vacía los datos de movimientos, diezmos y registros en Supabase, conservando usuarios y configuración.")
+        st.error("Esta acción eliminará de forma irreversible movimientos, diezmos, actividades y compromisos.")
 
         chk_fmt = st.checkbox("Comprendo el riesgo y confirmo el vaciado definitivo del sistema.")
         txt_fmt = st.text_input("Escribe 'REINICIAR' en mayúsculas para desbloquear:", placeholder="REINICIAR")
@@ -574,17 +536,17 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
                         conn.commit()
 
                     core.registrar_log("Configuración", "RESET", "Sistema formateado de fábrica.")
-                    st.success("🎉 Base de datos operativa reiniciada de fábrica con éxito.")
+                    st.success("🎉 Base de datos reiniciada de fábrica con éxito.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error durante el reinicio: {e}")
 
 # ==============================================================================
-# 4. GESTIÓN DE USUARIOS Y ASIGNACIÓN DE MÓDULOS (SOLO ADMINISTRADOR)
+# 4. GESTIÓN DE USUARIOS Y PERMISOS (SOLO ADMINISTRADOR)
 # ==============================================================================
 elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
     st.markdown("#### 👥 Administración de Usuarios y Asignación de Módulos")
-    st.caption("Marca con exactitud a qué módulos de la aplicación tendrá acceso cada cuenta. Las páginas no seleccionadas no se verán en su menú lateral.")
+    st.caption("Marca con exactitud a qué módulos de la aplicación tendrá acceso cada cuenta.")
 
     with st.expander("➕ Registrar Nuevo Usuario y Asignar Módulos", expanded=False):
         with st.form("form_nuevo_usuario_modulos"):
@@ -597,14 +559,14 @@ elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
                 nuevo_pass = st.text_input("Contraseña Temporal:", type="password")
 
             st.markdown("---")
-            st.markdown("##### 📌 Módulos (Páginas) autorizadas para este usuario:")
+            st.markdown("##### 📌 Módulos autorizados para este usuario:")
             modulos_autorizados = st.multiselect(
                 "Selecciona los módulos a los que tendrá acceso:",
                 options=TODOS_LOS_MODULOS,
                 default=["Panel Principal", "Diezmos", "Tesorería"]
             )
             
-            st.info("🔒 **Seguridad estricta**: Si seleccionas 'Configuración', el usuario NO tendrá acceso a las pestañas de 'Respaldo' ni de 'Usuarios'. Esas secciones están reservadas única y exclusivamente para el Administrador.")
+            st.info("🔒 Las pestañas de 'Respaldo' y 'Usuarios' solo son accesibles para el Administrador.")
 
             btn_guardar_u = st.form_submit_button("Guardar Usuario con Módulos", type="primary")
 
@@ -622,7 +584,7 @@ elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
                             VALUES (%s, %s, %s, %s, TRUE, %s)
                         """, (nuevo_u, pass_hash, nuevo_nom, nuevo_rol, cadena_permisos))
                         core.registrar_log("Usuarios", "Crear", f"Usuario '{nuevo_u}' registrado con módulos: {cadena_permisos}")
-                        st.success(f"✅ Usuario '{nuevo_u}' registrado exitosamente con sus módulos permitidos.")
+                        st.success(f"✅ Usuario '{nuevo_u}' registrado exitosamente.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error al registrar usuario: {e}")
