@@ -21,62 +21,7 @@ core.verificar_acceso_pagina("Panel Principal")
 core.aplicar_estilos_base()
 
 # ==============================================================================
-# CARGA Y CACHÉ CENTRALIZADO DE DATOS (MÁXIMA VELOCIDAD)
-# ==============================================================================
-@st.cache_data(ttl=120, show_spinner=False)
-def cargar_datos_dashboard():
-    try:
-        df_m = core.read_db("""
-            SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, estado_credito 
-            FROM public.movimientos 
-            WHERE comprobante NOT LIKE 'ASIENTO-APERTURA%%'
-        """)
-    except Exception:
-        df_m = pd.DataFrame()
-
-    try:
-        df_d = core.read_db("SELECT id, fecha, id_miembro, nombre_miembro, mes, medio, monto FROM public.diezmos")
-    except Exception:
-        df_d = pd.DataFrame()
-
-    try:
-        df_am = core.read_db("SELECT id, id_actividad, fecha, tipo, concepto, monto, condicion, cliente_deudor, estado_cobro, medio, fondo_destino, liquidado FROM public.actividad_movimientos")
-    except Exception:
-        df_am = pd.DataFrame()
-
-    try:
-        df_a = core.read_db("SELECT id, nombre, fecha, responsable, estado FROM public.actividades")
-    except Exception:
-        df_a = pd.DataFrame()
-
-    try:
-        df_miem = core.read_db("SELECT id_miembro, nombre FROM public.miembros")
-    except Exception:
-        df_miem = pd.DataFrame()
-
-    try:
-        df_f = core.read_db("SELECT nombre FROM public.fondos_catalogo")
-        f_list = df_f["nombre"].tolist() if not df_f.empty else ["General"]
-    except Exception:
-        f_list = ["General"]
-
-    try:
-        df_c = core.read_db("SELECT clave, valor FROM public.config_iglesia")
-        cfg_dict = dict(zip(df_c["clave"], df_c["valor"])) if not df_c.empty else {}
-    except Exception:
-        cfg_dict = {}
-
-    return df_m, df_d, df_am, df_a, df_miem, f_list, cfg_dict
-
-df_mov, df_dz, df_act_mov, df_act, df_miembros, fondos_list, cfg_dict = cargar_datos_dashboard()
-
-nom_iglesia = cfg_dict.get("nombre_iglesia", "IGLESIA EVANGÉLICA NAZARETH")
-denominacion = cfg_dict.get("denominacion", "ASAMBLEAS DE DIOS DEL PERÚ")
-pastor_tit = cfg_dict.get("pastor_principal", "Pastor Principal")
-tesorero_tit = cfg_dict.get("tesorero_general", "Tesorero General")
-
-# ==============================================================================
-# ENCABEZADO Y SELECTOR DE CORTE
+# ENCABEZADO Y SELECTOR DE CORTE (MOVIDO ARRIBA PARA OPTIMIZAR SQL)
 # ==============================================================================
 col_tit, col_per = st.columns([7, 3])
 with col_tit:
@@ -90,7 +35,61 @@ with col_per:
     periodo_actual_str = f"{anio_sel}-{num_m_sel:02d}"
 
 # ==============================================================================
-# CÁLCULOS ACUMULADOS HASTA LA FECHA DE CORTE
+# CARGA Y CACHÉ GRANULAR (SEPARADO PARA MÁXIMA VELOCIDAD)
+# ==============================================================================
+@st.cache_data(ttl=86400, show_spinner=False)  # Caché de 24 horas para catálogos pesados
+def cargar_catalogos_fijos():
+    try:
+        df_miem = core.read_db("SELECT id_miembro, nombre FROM public.miembros")
+        df_f = core.read_db("SELECT nombre FROM public.fondos_catalogo")
+        df_c = core.read_db("SELECT clave, valor FROM public.config_iglesia")
+        
+        f_list = df_f["nombre"].tolist() if not df_f.empty else ["General"]
+        cfg = dict(zip(df_c["clave"], df_c["valor"])) if not df_c.empty else {}
+        return df_miem, f_list, cfg
+    except Exception:
+        return pd.DataFrame(), ["General"], {}
+
+@st.cache_data(ttl=180, show_spinner=False) # Caché de 3 minutos para transacciones
+def cargar_datos_periodo(corte_str):
+    # 🚀 OPTIMIZACIÓN: Añadido WHERE fecha <= %s para no traer datos futuros y reducir peso de red
+    try:
+        df_m = core.read_db("""
+            SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, estado_credito 
+            FROM public.movimientos 
+            WHERE comprobante NOT LIKE 'ASIENTO-APERTURA%%' AND fecha <= %s
+        """, (corte_str,))
+    except Exception:
+        df_m = pd.DataFrame()
+
+    try:
+        df_d = core.read_db("SELECT id, fecha, id_miembro, nombre_miembro, mes, medio, monto FROM public.diezmos WHERE fecha <= %s", (corte_str,))
+    except Exception:
+        df_d = pd.DataFrame()
+
+    try:
+        df_am = core.read_db("SELECT id, id_actividad, fecha, tipo, concepto, monto, condicion, cliente_deudor, estado_cobro, medio, fondo_destino, liquidado FROM public.actividad_movimientos WHERE fecha <= %s", (corte_str,))
+    except Exception:
+        df_am = pd.DataFrame()
+
+    try:
+        df_a = core.read_db("SELECT id, nombre, fecha, responsable, estado FROM public.actividades WHERE fecha <= %s", (corte_str,))
+    except Exception:
+        df_a = pd.DataFrame()
+
+    return df_m, df_d, df_am, df_a
+
+# Llamada a las funciones de datos optimizadas
+df_miembros, fondos_list, cfg_dict = cargar_catalogos_fijos()
+df_mov, df_dz, df_act_mov, df_act = cargar_datos_periodo(fecha_corte_str)
+
+nom_iglesia = cfg_dict.get("nombre_iglesia", "IGLESIA EVANGÉLICA NAZARETH")
+denominacion = cfg_dict.get("denominacion", "ASAMBLEAS DE DIOS DEL PERÚ")
+pastor_tit = cfg_dict.get("pastor_principal", "Pastor Principal")
+tesorero_tit = cfg_dict.get("tesorero_general", "Tesorero General")
+
+# ==============================================================================
+# CÁLCULOS ACUMULADOS (VELOCIDAD EXTREMA - LA DATA YA ESTÁ FILTRADA)
 # ==============================================================================
 tiene_asientos_dz = not df_mov[df_mov["comprobante"].str.startswith("ASIENTO-DZ-", na=False)].empty if not df_mov.empty and "comprobante" in df_mov.columns else False
 
@@ -112,9 +111,9 @@ saldo_caja = ing_efe - egr_efe
 saldo_banco = ing_ban - egr_ban
 total_disp = saldo_caja + saldo_banco
 
-# Filtros por fecha de corte
-df_mov_corte = df_mov[df_mov["fecha"] <= fecha_corte_str].copy() if not df_mov.empty and "fecha" in df_mov.columns else pd.DataFrame()
-df_act_corte = df_act_mov[df_act_mov["fecha"] <= fecha_corte_str].copy() if not df_act_mov.empty and "fecha" in df_act_mov.columns else pd.DataFrame()
+# Ya no hace falta cortar los DataFrames porque SQL lo hizo por nosotros
+df_mov_corte = df_mov 
+df_act_corte = df_act_mov 
 
 # 1. Fondos restringidos
 fondos_saldos_corte = {}
@@ -227,8 +226,8 @@ st.markdown("#### 📖 Análisis de Fidelidad y Recaudación de Diezmos")
 df_dz_analisis = pd.DataFrame()
 if not df_dz.empty and "fecha" in df_dz.columns:
     df_dz_temp = df_dz.copy()
-    df_dz_temp["dt"] = pd.to_datetime(df_dz_temp["fecha"], errors="coerce")
-    df_dz_temp["periodo"] = df_dz_temp["dt"].dt.strftime("%Y-%m")
+    # 🚀 OPTIMIZACIÓN: Slicing de strings puro (100x más rápido que pd.to_datetime)
+    df_dz_temp["periodo"] = df_dz_temp["fecha"].astype(str).str[:7]
     df_dz_analisis = df_dz_temp.groupby("periodo").agg(
         total_recaudado=("monto", "sum"),
         cant_diezmantes=("id_miembro", "nunique"),
@@ -261,8 +260,9 @@ st.caption(f"Genera la rendición completa para **{mes_sel} {anio_sel}** con bal
 df_mov_mes = pd.DataFrame()
 if not df_mov.empty and "fecha" in df_mov.columns:
     df_mov_temp = df_mov.copy()
-    df_mov_temp["dt"] = pd.to_datetime(df_mov_temp["fecha"], errors="coerce")
-    df_mov_mes = df_mov_temp[(df_mov_temp["dt"].dt.year == anio_sel) & (df_mov_temp["dt"].dt.month == num_m_sel)].copy()
+    # 🚀 OPTIMIZACIÓN: Slicing en lugar de conversión pesada a datetime
+    df_mov_temp["periodo"] = df_mov_temp["fecha"].astype(str).str[:7]
+    df_mov_mes = df_mov_temp[df_mov_temp["periodo"] == periodo_actual_str].copy()
 
 ing_periodo = float(df_mov_mes[df_mov_mes["tipo"] == "Ingreso"]["monto"].sum()) if not df_mov_mes.empty else 0.0
 egr_periodo = float(df_mov_mes[df_mov_mes["tipo"] == "Egreso"]["monto"].sum()) if not df_mov_mes.empty else 0.0
