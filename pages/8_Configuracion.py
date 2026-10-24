@@ -33,7 +33,7 @@ TODOS_LOS_MODULOS = [
 # ==============================================================================
 # CARGA DE CONFIGURACIÓN PERSISTENTE EN MEMORIA (OPTIMIZADA)
 # ==============================================================================
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def cargar_todas_las_configs():
     try:
         df_c = core.read_db("SELECT clave, valor FROM public.config_iglesia")
@@ -52,6 +52,7 @@ def set_config(clave, valor):
         ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor
         RETURNING clave
     """, (clave, str(valor).strip()))
+    cargar_todas_las_configs.clear() # Invalidar caché para que refleje el cambio de inmediato
 
 def crear_backup_archivos_zip():
     buf = io.BytesIO()
@@ -182,18 +183,20 @@ if seccion_cfg == "🏛️ Parámetros y Catálogos":
 
     with col_der:
         st.markdown("#### 💼 Fondos de Tesorería y Saldos")
-        df_f = core.read_db("SELECT id, nombre FROM public.fondos_catalogo ORDER BY id ASC")
-        df_movs_f = core.read_db("SELECT fondo, tipo, monto FROM public.movimientos")
+        # 🚀 OPTIMIZACIÓN: SQL calcula los saldos directamente sin bucles en Python
+        df_f = core.read_db("""
+            SELECT 
+                f.nombre AS "Fondo",
+                COALESCE(SUM(CASE WHEN m.tipo = 'Ingreso' THEN m.monto ELSE 0 END), 0) - 
+                COALESCE(SUM(CASE WHEN m.tipo = 'Egreso' THEN m.monto ELSE 0 END), 0) AS "Saldo Actual (S/.)"
+            FROM public.fondos_catalogo f
+            LEFT JOIN public.movimientos m ON f.nombre = m.fondo
+            GROUP BY f.nombre
+            ORDER BY f.nombre ASC
+        """)
         
-        saldos_f = {}
-        for fn in df_f["nombre"].tolist():
-            i = float(df_movs_f[(df_movs_f["fondo"] == fn) & (df_movs_f["tipo"] == "Ingreso")]["monto"].sum()) if not df_movs_f.empty else 0.0
-            e = float(df_movs_f[(df_movs_f["fondo"] == fn) & (df_movs_f["tipo"] == "Egreso")]["monto"].sum()) if not df_movs_f.empty else 0.0
-            saldos_f[fn] = i - e
-            
-        df_f["Saldo Actual (S/.)"] = df_f["nombre"].map(saldos_f).fillna(0.0)
         st.dataframe(
-            df_f.rename(columns={"nombre": "Fondo"}).style.format({"Saldo Actual (S/.)": "S/. {:,.2f}"}), 
+            df_f.style.format({"Saldo Actual (S/.)": "S/. {:,.2f}"}), 
             use_container_width=True, 
             hide_index=True
         )
@@ -209,7 +212,7 @@ if seccion_cfg == "🏛️ Parámetros y Catálogos":
                         st.toast("✅ Fondo creado.")
                         st.rerun()
         with c_f2:
-            f_del_disp = [f for f in df_f["nombre"].tolist() if f != "General"]
+            f_del_disp = [f for f in df_f["Fondo"].tolist() if f != "General"]
             if f_del_disp:
                 f_del = st.selectbox("Eliminar Fondo:", f_del_disp, key="sel_fnd_del")
                 df_cant = core.read_db("SELECT COUNT(*) as t FROM public.movimientos WHERE fondo=?", (f_del,))
@@ -267,7 +270,7 @@ if seccion_cfg == "🏛️ Parámetros y Catálogos":
                         st.rerun()
 
 # ==============================================================================
-# 2. CIERRES DE MES Y AUDITORÍA
+# 2. CIERRES DE MES Y AUDITORÍA (OPTIMIZADO SQL Y CACHÉ)
 # ==============================================================================
 elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
     col_cierre, col_aud = st.columns([1, 1])
@@ -292,44 +295,59 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
         c_efe_sig = f"ASIENTO-APERTURA-EFE-{sig_per}"
         c_ban_sig = f"ASIENTO-APERTURA-BAN-{sig_per}"
 
+        # 🚀 OPTIMIZACIÓN: Calcula agrupados directamente en DB usando LIKE para texto
         df_m_per = core.read_db("""
-            SELECT tipo, monto, medio, comprobante 
+            SELECT medio, tipo, SUM(monto) as total
             FROM public.movimientos 
-            WHERE SUBSTRING(fecha::text FROM 1 FOR 7) = ?
-        """, (per_str,))
+            WHERE fecha LIKE ?
+            GROUP BY medio, tipo
+        """, (per_str + '%',))
 
         c_efe_propio = f"ASIENTO-APERTURA-EFE-{per_str}"
         c_ban_propio = f"ASIENTO-APERTURA-BAN-{per_str}"
-        tiene_apertura_propia = not df_m_per.empty and df_m_per["comprobante"].isin([c_efe_propio, c_ban_propio]).any()
+        
+        # Validar si el mes seleccionado ya cuenta con un asiento de apertura dentro de sí mismo
+        df_verificar_apertura = core.read_db("SELECT id FROM public.movimientos WHERE comprobante IN (?, ?)", (c_efe_propio, c_ban_propio))
+        tiene_apertura_propia = not df_verificar_apertura.empty
 
         if tiene_apertura_propia:
-            ing_efe = float(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["monto"].sum())
-            egr_efe = float(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Egreso")]["monto"].sum())
+            # Los totales ya incluyen el asiento de apertura
+            ing_efe = float(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["total"].sum()) if not df_m_per.empty else 0.0
+            egr_efe = float(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Egreso")]["total"].sum()) if not df_m_per.empty else 0.0
             sal_efe = ing_efe - egr_efe
 
-            ing_ban = float(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["monto"].sum())
-            egr_ban = float(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Egreso")]["monto"].sum())
+            ing_ban = float(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["total"].sum()) if not df_m_per.empty else 0.0
+            egr_ban = float(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Egreso")]["total"].sum()) if not df_m_per.empty else 0.0
             sal_ban = ing_ban - egr_ban
         else:
+            # 🚀 OPTIMIZACIÓN: Arqueo histórico súper rápido sin descargar tabla completa
             df_hist = core.read_db("""
-                SELECT tipo, monto, medio 
+                SELECT medio, tipo, SUM(monto) as total
                 FROM public.movimientos 
-                WHERE fecha <= ? AND comprobante NOT LIKE ?
-            """, (f_fin_per, 'ASIENTO-APERTURA%'))
+                WHERE fecha <= ? AND comprobante NOT LIKE 'ASIENTO-APERTURA%%'
+                GROUP BY medio, tipo
+            """, (f_fin_per,))
 
-            ing_efe = float(df_hist[(df_hist["medio"] == "Efectivo") & (df_hist["tipo"] == "Ingreso")]["monto"].sum()) if not df_hist.empty else 0.0
-            egr_efe = float(df_hist[(df_hist["medio"] == "Efectivo") & (df_hist["tipo"] == "Egreso")]["monto"].sum()) if not df_hist.empty else 0.0
+            ing_efe = float(df_hist[(df_hist["medio"] == "Efectivo") & (df_hist["tipo"] == "Ingreso")]["total"].sum()) if not df_hist.empty else 0.0
+            egr_efe = float(df_hist[(df_hist["medio"] == "Efectivo") & (df_hist["tipo"] == "Egreso")]["total"].sum()) if not df_hist.empty else 0.0
             sal_efe = ing_efe - egr_efe
 
-            ing_ban = float(df_hist[(df_hist["medio"] != "Efectivo") & (df_hist["tipo"] == "Ingreso")]["monto"].sum()) if not df_hist.empty else 0.0
-            egr_ban = float(df_hist[(df_hist["medio"] != "Efectivo") & (df_hist["tipo"] == "Egreso")]["monto"].sum()) if not df_hist.empty else 0.0
+            ing_ban = float(df_hist[(df_hist["medio"] != "Efectivo") & (df_hist["tipo"] == "Ingreso")]["total"].sum()) if not df_hist.empty else 0.0
+            egr_ban = float(df_hist[(df_hist["medio"] != "Efectivo") & (df_hist["tipo"] == "Egreso")]["total"].sum()) if not df_hist.empty else 0.0
             sal_ban = ing_ban - egr_ban
 
         sal_total = sal_efe + sal_ban
 
-        df_op_mes = df_m_per[~df_m_per["comprobante"].astype(str).str.startswith("ASIENTO-APERTURA")] if not df_m_per.empty else pd.DataFrame()
-        ing_op = float(df_op_mes[df_op_mes["tipo"] == "Ingreso"]["monto"].sum()) if not df_op_mes.empty else 0.0
-        egr_op = float(df_op_mes[df_op_mes["tipo"] == "Egreso"]["monto"].sum()) if not df_op_mes.empty else 0.0
+        # Cálculos de ingresos y egresos operativos del mes excluyendo la apertura
+        df_op_mes = core.read_db("""
+            SELECT tipo, SUM(monto) as total
+            FROM public.movimientos
+            WHERE fecha LIKE ? AND comprobante NOT LIKE 'ASIENTO-APERTURA%%'
+            GROUP BY tipo
+        """, (per_str + '%',))
+        
+        ing_op = float(df_op_mes[df_op_mes["tipo"] == "Ingreso"]["total"].sum()) if not df_op_mes.empty else 0.0
+        egr_op = float(df_op_mes[df_op_mes["tipo"] == "Egreso"]["total"].sum()) if not df_op_mes.empty else 0.0
 
         cierre_act = core.read_db("SELECT * FROM public.cierres_mensuales WHERE periodo=?", (per_str,))
         esta_cerrado = not cierre_act.empty and cierre_act.iloc[0]["estado"] == "Cerrado"
@@ -404,6 +422,7 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
                     "Cierres", "Bloqueo", 
                     f"Cierre {per_str}. Aperturas creadas para {sig_per}: Efectivo S/. {sal_efe:,.2f}, Bancos S/. {sal_ban:,.2f}"
                 )
+                st.cache_data.clear() # Limpiar todo para que se reflejen los nuevos asientos
                 st.success(f"🎉 Periodo {per_str} cerrado. Se generaron los 2 asientos de apertura para el 01/{num_m_sig:02d}/{anio_sig}.")
                 st.rerun()
         else:
@@ -420,6 +439,7 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
                         core.query_db("DELETE FROM public.movimientos WHERE comprobante IN (?, ?)", (c_efe_sig, c_ban_sig))
                         core.query_db("UPDATE public.cierres_mensuales SET estado='Abierto' WHERE periodo=?", (per_str,))
                         core.registrar_log("Cierres", "Reapertura", f"Reabierto {per_str}: {mot.strip()} (Eliminados {c_efe_sig} y {c_ban_sig})")
+                        st.cache_data.clear()
                         st.toast("🔓 Periodo reabierto y asientos de apertura revertidos.")
                         st.rerun()
                     else:
@@ -535,6 +555,7 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
                                     pass
                         conn.commit()
 
+                    st.cache_data.clear() # Limpiar toda la caché
                     core.registrar_log("Configuración", "RESET", "Sistema formateado de fábrica.")
                     st.success("🎉 Base de datos reiniciada de fábrica con éxito.")
                     st.rerun()
@@ -581,7 +602,7 @@ elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
                     try:
                         core.query_db("""
                             INSERT INTO public.usuarios_sistema (usuario, password_hash, nombre, rol, activo, permisos)
-                            VALUES (%s, %s, %s, %s, TRUE, %s)
+                            VALUES (?, ?, ?, ?, TRUE, ?)
                         """, (nuevo_u, pass_hash, nuevo_nom, nuevo_rol, cadena_permisos))
                         core.registrar_log("Usuarios", "Crear", f"Usuario '{nuevo_u}' registrado con módulos: {cadena_permisos}")
                         st.success(f"✅ Usuario '{nuevo_u}' registrado exitosamente.")
@@ -636,11 +657,11 @@ elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
 
                     if nueva_clave.strip():
                         n_hash = core.encriptar_clave(nueva_clave)
-                        core.query_db("UPDATE public.usuarios_sistema SET password_hash=%s, permisos=%s WHERE id=%s", (n_hash, cadena_nueva, id_u_sel))
+                        core.query_db("UPDATE public.usuarios_sistema SET password_hash=?, permisos=? WHERE id=?", (n_hash, cadena_nueva, id_u_sel))
                         core.registrar_log("Usuarios", "Seguridad", f"Actualizada clave y módulos de {row_user['usuario']}: {cadena_nueva}")
                         st.success("✅ Módulos y contraseña actualizados exitosamente.")
                     else:
-                        core.query_db("UPDATE public.usuarios_sistema SET permisos=%s WHERE id=%s", (cadena_nueva, id_u_sel))
+                        core.query_db("UPDATE public.usuarios_sistema SET permisos=? WHERE id=?", (cadena_nueva, id_u_sel))
                         core.registrar_log("Usuarios", "Seguridad", f"Actualizados módulos de {row_user['usuario']}: {cadena_nueva}")
                         st.success("✅ Módulos autorizados actualizados exitosamente.")
                     st.rerun()
@@ -654,16 +675,18 @@ elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
                     nuevo_estado = not bool(row_user["activo"])
                     btn_txt = "🔴 Desactivar Cuenta" if row_user["activo"] else "🟢 Habilitar Cuenta"
                     if st.button(btn_txt):
-                        core.query_db("UPDATE public.usuarios_sistema SET activo=%s WHERE id=%s", (nuevo_estado, id_u_sel))
+                        core.query_db("UPDATE public.usuarios_sistema SET activo=? WHERE id=?", (nuevo_estado, id_u_sel))
                         core.registrar_log("Usuarios", "Estado", f"Estado de {row_user['usuario']} cambiado a {nuevo_estado}")
                         st.toast("✅ Estado actualizado.")
                         st.rerun()
 
                     if st.button("🗑️ Eliminar Usuario Definitivamente", type="secondary"):
-                        core.query_db("DELETE FROM public.usuarios_sistema WHERE id=%s", (id_u_sel,))
+                        core.query_db("DELETE FROM public.usuarios_sistema WHERE id=?", (id_u_sel,))
                         core.registrar_log("Usuarios", "Eliminación", f"Eliminado usuario {row_user['usuario']}")
                         st.toast("🗑️ Usuario eliminado.")
                         st.rerun()
 
     except Exception as e:
         st.error(f"Error al gestionar usuarios: {e}")
+
+core.mostrar_pie_pagina()
