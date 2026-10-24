@@ -1,0 +1,17 @@
+name: Mantener Sistema Punbax Activo
+
+on:
+  schedule:
+    # Se ejecuta automáticamente cada 2 horas
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-streamlit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Despertar contenedor Streamlit con sesión
+        run: |
+          curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+          "https://sistema-nazareth-bfx5nlezds7ubxs4jcblkx.streamlit.app/" > /dev/null
+          echo "Petición enviada con éxito."
