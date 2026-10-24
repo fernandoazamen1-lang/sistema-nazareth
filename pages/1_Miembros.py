@@ -31,13 +31,18 @@ st.markdown("---")
 # ==============================================================================
 # CARGA DE DATOS EN MEMORIA (OPTIMIZADA)
 # ==============================================================================
-df_m = core.read_db("""
-    SELECT 
-        ROW_NUMBER() OVER(ORDER BY id_miembro ASC) AS nro_orden, 
-        * 
-    FROM public.miembros 
-    ORDER BY nombre ASC
-""")
+@st.cache_data(ttl=600, show_spinner=False)
+def cargar_padron_miembros():
+    """Descarga el padrón una sola vez y lo mantiene en memoria para búsquedas instantáneas"""
+    return core.read_db("""
+        SELECT 
+            ROW_NUMBER() OVER(ORDER BY nombre ASC) AS nro_orden, 
+            * 
+        FROM public.miembros 
+        ORDER BY nombre ASC
+    """)
+
+df_m = cargar_padron_miembros()
 
 LISTA_CARGOS = [
     "Miembro Activo", 
@@ -193,6 +198,7 @@ if opcion == "Ver Miembros":
 
         df_filtrado = df_mostrar
         if buscar_txt.strip():
+            # Filtro ultra rápido en memoria con Pandas (ideal para < 10,000 registros)
             df_filtrado = df_filtrado[
                 df_filtrado["Nombres y Apellidos"].astype(str).str.contains(buscar_txt, case=False, na=False) |
                 df_filtrado["DNI / Código"].astype(str).str.contains(buscar_txt, case=False, na=False) |
@@ -312,6 +318,10 @@ elif opcion == "Registrar Miembro":
                     str(d_fnac), d_civil, d_baut, d_pleno, d_cargo, ruta_foto_guardada
                 ))
                 core.registrar_log("Miembros", "Registro", f"Inscrito {d_nom.strip()} (DNI: {d_id.strip()})")
+                
+                # Invalidamos directamente la caché de carga_padron_miembros
+                cargar_padron_miembros.clear()
+                
                 st.toast("✅ Miembro registrado exitosamente.")
                 st.rerun()
             except Exception as e_db:
@@ -418,6 +428,10 @@ elif opcion == "✏️ Editar Miembro":
                         """, (edit_id.strip(), edit_nom.strip(), dni_actual))
 
                     core.registrar_log("Miembros", "Edición", f"Actualizado miembro {edit_nom.strip()} (DNI: {edit_id.strip()})")
+                    
+                    # Refrescar caché
+                    cargar_padron_miembros.clear()
+                    
                     st.toast("✅ Datos actualizados con éxito.")
                     st.rerun()
                 except Exception as e_db:
@@ -517,6 +531,9 @@ elif opcion == "📥 Carga Masiva (Excel)":
                                 """
                                 execute_batch(cur, sql_upsert, registros_para_insertar, page_size=100)
                             conn.commit()
+                        
+                        # Limpiamos el padrón guardado en memoria
+                        cargar_padron_miembros.clear()
                         st.cache_data.clear()
 
                         core.registrar_log("Miembros", "Carga Masiva", f"Importados en lote {len(registros_para_insertar)} miembros.")
@@ -547,5 +564,10 @@ elif opcion == "Eliminar Miembro":
         if st.button("Eliminar Definitivamente", type="primary"):
             core.query_db("DELETE FROM public.miembros WHERE id_miembro = ?", (datos_del["id_miembro"],))
             core.registrar_log("Miembros", "Eliminación", f"Retirado miembro {m_del} (DNI: {datos_del['id_miembro']})")
+            
+            cargar_padron_miembros.clear()
+            
             st.toast("🗑️ Miembro eliminado del padrón.")
             st.rerun()
+
+core.mostrar_pie_pagina()
