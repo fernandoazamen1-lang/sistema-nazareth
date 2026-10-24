@@ -25,15 +25,38 @@ opcion = st.radio(
 st.markdown("---")
 
 # ==============================================================================
+# CARGA DE DATOS OPTIMIZADA CON CACHÉ
+# ==============================================================================
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_notas_foro():
+    """Trae las notas del foro y las guarda en memoria por 5 minutos."""
+    return core.read_db("""
+        SELECT id, fecha_creacion, autor, titulo, contenido, fecha_limite, prioridad, leido 
+        FROM public.foro_recordatorios 
+        ORDER BY id DESC
+    """)
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def cargar_lista_responsables():
+    """Mantiene la lista de autores en memoria por 24 horas."""
+    df_resp = core.read_db("SELECT nombre FROM public.responsables_catalogo ORDER BY nombre ASC")
+    return df_resp["nombre"].tolist() if not df_resp.empty else ["Secretaría", "Pastor Principal", "Tesorería General"]
+
+def limpiar_caches_foro():
+    cargar_notas_foro.clear()
+    st.cache_data.clear()
+
+# ==============================================================================
 # VISTA 1: TABLÓN DE NOTAS
 # ==============================================================================
 if opcion == "Tablón de Notas":
-    df_foro = core.read_db("SELECT id, fecha_creacion, autor, titulo, contenido, fecha_limite, prioridad, leido FROM public.foro_recordatorios ORDER BY id DESC")
+    df_foro = cargar_notas_foro()
     
     if df_foro.empty:
         st.info("No hay notas ni recordatorios registrados.")
     else:
-        for _, r in df_foro.iterrows():
+        # Mostramos los últimos 50 registros para no saturar la interfaz de usuario si hay miles
+        for _, r in df_foro.head(50).iterrows():
             with st.container():
                 c1, c2 = st.columns([6, 2])
                 with c1:
@@ -46,6 +69,7 @@ if opcion == "Tablón de Notas":
                         if st.button("Marcar Leído", key=f"f_lei_{r['id']}"):
                             core.query_db("UPDATE public.foro_recordatorios SET leido=1 WHERE id=?", (r["id"],))
                             core.registrar_log("Foro", "Atendido", f"Marcado leído: {r['titulo']}")
+                            limpiar_caches_foro()
                             st.rerun()
                     else:
                         st.caption("✅ Atendido / Leído")
@@ -53,6 +77,7 @@ if opcion == "Tablón de Notas":
                     if st.button("🗑️ Eliminar", key=f"f_del_{r['id']}", type="secondary"):
                         core.query_db("DELETE FROM public.foro_recordatorios WHERE id=?", (r["id"],))
                         core.registrar_log("Foro", "Eliminación", f"Nota eliminada: {r['titulo']}")
+                        limpiar_caches_foro()
                         st.toast("🗑️ Nota eliminada.")
                         st.rerun()
             st.divider()
@@ -61,8 +86,7 @@ if opcion == "Tablón de Notas":
 # VISTA 2: PUBLICAR RECORDATORIO
 # ==============================================================================
 elif opcion == "Publicar Recordatorio":
-    df_resp = core.read_db("SELECT nombre FROM public.responsables_catalogo ORDER BY nombre ASC")
-    lista_resp = df_resp["nombre"].tolist() if not df_resp.empty else ["Secretaría", "Pastor Principal", "Tesorería General"]
+    lista_resp = cargar_lista_responsables()
     
     with st.form("form_nuevo_foro", clear_on_submit=True):
         c1, c2 = st.columns(2)
@@ -83,7 +107,13 @@ elif opcion == "Publicar Recordatorio":
                     VALUES (?, ?, ?, ?, ?, ?, 0)
                 """, (str(date.today()), autor, titulo.strip(), contenido.strip(), str(limite), prioridad))
                 core.registrar_log("Foro", "Publicación", f"Publicado: {titulo.strip()} por {autor}")
+                
+                limpiar_caches_foro()
+                
                 st.toast("✅ Publicado en el foro.")
                 st.rerun()
             else:
                 st.warning("⚠️ Debes ingresar un título y contenido para publicar.")
+
+# Pie de página institucional
+core.mostrar_pie_pagina()
