@@ -20,7 +20,7 @@ core.aplicar_estilos_base()
 # ==============================================================================
 # CARGA DE CATÁLOGOS BASE EN MEMORIA (OPTIMIZADA)
 # ==============================================================================
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def cargar_catalogos_diezmos():
     df_miem = core.read_db("SELECT id_miembro, nombre, telefono FROM public.miembros ORDER BY nombre ASC")
     d_m = dict(zip(df_miem["nombre"], df_miem["id_miembro"])) if not df_miem.empty else {}
@@ -31,6 +31,38 @@ def cargar_catalogos_diezmos():
     return d_m, d_t, tes_def
 
 d_miembros, d_telefonos, tesorero_def = cargar_catalogos_diezmos()
+
+# ==============================================================================
+# CONSULTAS SQL OPTIMIZADAS CON CACHÉ
+# ==============================================================================
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_diezmos_mes(anio, num_m):
+    """Filtra los datos directamente en PostgreSQL (Ultrarrápido)"""
+    return core.read_db("""
+        SELECT 
+            id, fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle,
+            COALESCE(codigo_comprobante, 'D - ' || LPAD(id::text, 5, '0')) AS serie_constancia
+        FROM public.diezmos 
+        WHERE EXTRACT(YEAR FROM fecha) = %s AND EXTRACT(MONTH FROM fecha) = %s
+        ORDER BY fecha DESC, id DESC
+    """, (anio, num_m))
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_diezmos_busqueda():
+    """Carga simplificada para el buscador general con año pre-calculado en BD"""
+    return core.read_db("""
+        SELECT 
+            id, fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle,
+            COALESCE(codigo_comprobante, 'D - ' || LPAD(id::text, 5, '0')) AS serie_constancia,
+            EXTRACT(YEAR FROM fecha) AS anio_abono
+        FROM public.diezmos 
+        ORDER BY id DESC
+    """)
+
+def limpiar_caches_diezmos():
+    cargar_diezmos_mes.clear()
+    cargar_diezmos_busqueda.clear()
+    st.cache_data.clear() # Limpia también la general de core.py
 
 # ==============================================================================
 # MOTOR TIPOGRÁFICO UNICODE GARANTIZADO
@@ -130,14 +162,6 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
-
-def get_diezmos():
-    df = core.read_db("SELECT * FROM public.diezmos ORDER BY id DESC")
-    if not df.empty:
-        df["serie_constancia"] = df.apply(
-            lambda r: r["codigo_comprobante"] if r.get("codigo_comprobante") else f"D - {int(r['id']):05d}", axis=1
-        )
-    return df
 
 def proximo_codigo():
     df_u = core.read_db("SELECT codigo_comprobante, id FROM public.diezmos ORDER BY id DESC LIMIT 1")
@@ -352,6 +376,10 @@ if opcion == "Registrar Nuevo Diezmo":
                     (str(f_d), d_miembros[nom], nom, mes_c, medio, round(float(monto), 2), det.strip(), sig_cod)
                 )
                 core.registrar_log("Diezmos", "Registro", f"Diezmo {nom} S/. {monto:,.2f} ({sig_cod})")
+                
+                # Invalidamos la caché de reportes
+                limpiar_caches_diezmos()
+
                 st.session_state["ultimo_dz"] = {
                     "serie": sig_cod, "fecha": str(f_d), "nombre": nom, "mes": mes_c,
                     "medio": medio, "monto": monto, "detalle": det.strip(), "tesorero": tes.strip(),
@@ -373,10 +401,10 @@ elif opcion == "Ver Registros por Mes":
     with c2: mes_s = st.selectbox("Mes de Abono:", core.MESES, index=date.today().month - 1)
     with c3: med_s = st.selectbox("Medio:", ["Todos", "Efectivo", "Depósito / Transferencia"])
 
-    df_all = get_diezmos()
-    if not df_all.empty:
-        df_all["dt"] = pd.to_datetime(df_all["fecha"], errors="coerce")
-        df_f = df_all[(df_all["dt"].dt.year == anio_s) & (df_all["dt"].dt.month == core.MESES_NUM[mes_s])].copy()
+    # Consulta optimizada que trae solo el mes seleccionado usando SQL
+    df_f = cargar_diezmos_mes(anio_s, core.MESES_NUM[mes_s])
+    
+    if not df_f.empty:
         if med_s != "Todos":
             df_f = df_f[df_f["medio"] == med_s]
 
@@ -435,6 +463,10 @@ elif opcion == "Ver Registros por Mes":
                         (f_fin, round(float(ban), 2), c_ban, f"Diezmos banco {mes_s} {anio_s}")
                     )
                 core.registrar_log("Diezmos", "Tesorería", f"Asentados diezmos de {mes_s} {anio_s}")
+                
+                # Se actualizaron los movimientos, refrescamos el panel general
+                st.cache_data.clear()
+                
                 st.toast("✅ Asientos asentados en Tesorería con éxito.")
                 st.rerun()
             except Exception as err:
@@ -548,15 +580,13 @@ elif opcion == "Ficha Individual Oficial":
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### ⚙️ Gestión de Registros de Diezmo (Modificar o Eliminar)")
-    df_all = get_diezmos()
+    
+    # Carga optimizada sin la pesada conversión to_datetime
+    df_all = cargar_diezmos_busqueda()
 
     if df_all.empty:
         st.info("No hay registros de diezmos para gestionar.")
     else:
-        df_all["dt_filtro"] = pd.to_datetime(df_all["fecha"], errors="coerce")
-        df_all["anio_abono"] = df_all["dt_filtro"].dt.year
-        df_all["mes_abono"] = df_all["dt_filtro"].dt.month
-
         with st.expander("🔎 Filtros de Búsqueda para Localizar Diezmo", expanded=True):
             col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             with col_f1:
@@ -635,6 +665,9 @@ elif opcion == "⚙️ Modificar o Eliminar":
                     """, (str(e_fecha), d_miembros[e_nom], e_nom, e_mes, e_medio, round(float(e_monto), 2), e_det.strip(), id_sel))
 
                     core.registrar_log("Diezmos", "Edición", f"Actualizado {reg['serie_constancia']} ({e_nom}) S/. {e_monto:,.2f}")
+                    
+                    limpiar_caches_diezmos()
+
                     st.session_state["ultimo_dz"] = {
                         "serie": reg["serie_constancia"], "fecha": str(e_fecha), "nombre": e_nom,
                         "mes": e_mes, "medio": e_medio, "monto": e_monto, "detalle": e_det.strip(),
@@ -653,7 +686,12 @@ elif opcion == "⚙️ Modificar o Eliminar":
                 if st.button("Eliminar Definitivamente", type="primary"):
                     core.query_db("DELETE FROM public.diezmos WHERE id=?", (id_sel,))
                     core.registrar_log("Diezmos", "Eliminación", f"Eliminada constancia {reg['serie_constancia']} (#{id_sel})")
+                    
+                    limpiar_caches_diezmos()
+
                     if "ultimo_dz" in st.session_state:
                         del st.session_state["ultimo_dz"]
                     st.toast(f"🗑️ Constancia {reg['serie_constancia']} eliminada.")
                     st.rerun()
+
+core.mostrar_pie_pagina()
