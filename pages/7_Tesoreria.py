@@ -30,18 +30,49 @@ opcion = st.radio(
 st.markdown("---")
 
 # ==============================================================================
-# CARGA DE CATÁLOGOS BASE EN MEMORIA (OPTIMIZADA)
+# CARGA CENTRALIZADA Y OPTIMIZADA CON CACHÉ (MÁXIMO RENDIMIENTO)
 # ==============================================================================
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def cargar_catalogos_tesoreria():
     df_f = core.read_db("SELECT nombre FROM public.fondos_catalogo ORDER BY id ASC")
     f_list = df_f["nombre"].tolist() if not df_f.empty else ["General"]
     
     df_r = core.read_db("SELECT nombre FROM public.responsables_catalogo ORDER BY nombre ASC")
     r_list = df_r["nombre"].tolist() if not df_r.empty else ["Tesorero"]
-    return f_list, r_list
+    
+    df_rub = core.read_db("SELECT tipo, categoria, subcategoria FROM public.rubros_catalogo")
+    return f_list, r_list, df_rub
 
-fondos, resps = cargar_catalogos_tesoreria()
+fondos, resps, df_rubros_cat = cargar_catalogos_tesoreria()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_movimientos_tesoreria():
+    """Descarga todo el libro mayor una vez, calculando Año y Mes desde Postgres"""
+    return core.read_db("""
+        SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable,
+               EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) AS anio,
+               EXTRACT(MONTH FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) AS mes_num
+        FROM public.movimientos 
+        ORDER BY CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE) DESC, id DESC
+    """)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_diezmos_graficos():
+    """Extrae montos y fechas de diezmos sin saturar memoria para el Cuadro 3"""
+    return core.read_db("""
+        SELECT monto, 
+               EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) AS anio,
+               EXTRACT(MONTH FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) AS mes_num
+        FROM public.diezmos 
+        WHERE fecha IS NOT NULL AND fecha != ''
+    """)
+
+def limpiar_caches_tesoreria():
+    cargar_movimientos_tesoreria.clear()
+    st.cache_data.clear() # Limpia también core.read_db genérico
+
+# Alimentamos la memoria principal
+df_mov_global = cargar_movimientos_tesoreria()
 
 # ==============================================================================
 # MOTOR DE REPORTES PDF Y EXCEL (BAJO DEMANDA)
@@ -337,19 +368,13 @@ def generar_pdf_cuadros_graficos(anio_sel, medio_sel, fig1, fig2, fig3, fig4, y1
 # 1. LIBRO DETALLADO CON FILTROS Y SELECTOR DE COLUMNAS
 # ==============================================================================
 if opcion == "Libro Detallado":
-    df_mov = core.read_db("SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
-    
-    if df_mov.empty:
+    if df_mov_global.empty:
         st.info("No hay movimientos registrados en el libro de Tesorería.")
     else:
-        df_mov["dt"] = pd.to_datetime(df_mov["fecha"], errors="coerce")
-        df_mov["anio"] = df_mov["dt"].dt.year
-        df_mov["mes_num"] = df_mov["dt"].dt.month
-
         with st.expander("🔎 Opciones de Filtrado de Movimientos (Filas)", expanded=True):
             f1, f2, f3, f4 = st.columns(4)
             with f1:
-                anios_disp = ["Todos"] + sorted([int(a) for a in df_mov["anio"].dropna().unique()], reverse=True)
+                anios_disp = ["Todos"] + sorted([int(a) for a in df_mov_global["anio"].dropna().unique()], reverse=True)
                 filtro_anio = st.selectbox("Año:", anios_disp, index=0)
             with f2:
                 filtro_mes = st.selectbox("Mes:", ["Todos"] + core.MESES, index=0)
@@ -362,7 +387,7 @@ if opcion == "Libro Detallado":
             with f5:
                 filtro_fondo = st.selectbox("Fondo:", ["Todos"] + fondos)
             with f6:
-                cats_existentes = ["Todas"] + sorted([str(c) for c in df_mov["categoria"].dropna().unique() if str(c).strip()])
+                cats_existentes = ["Todas"] + sorted([str(c) for c in df_mov_global["categoria"].dropna().unique() if str(c).strip()])
                 filtro_cat = st.selectbox("Categoría:", cats_existentes)
             with f7:
                 filtro_txt = st.text_input("Búsqueda Rápida:", placeholder="Buscar por detalle, comprobante o responsable...")
@@ -379,7 +404,7 @@ if opcion == "Libro Detallado":
             st.warning("⚠️ Debes seleccionar al menos una columna para mostrar la tabla.")
             cols_seleccionadas = ["Fecha", "Tipo", "Monto (S/.)"]
 
-        df_fil = df_mov
+        df_fil = df_mov_global
         filtros_activos = []
 
         if filtro_anio != "Todos":
@@ -468,22 +493,18 @@ if opcion == "Libro Detallado":
 # 2. EVOLUCIÓN Y GRÁFICOS
 # ==============================================================================
 elif opcion == "Evolución y Gráficos":
-    df_mov = core.read_db("""
-        SELECT fecha, tipo, monto, medio 
-        FROM public.movimientos 
-        WHERE comprobante NOT LIKE 'ASIENTO-APERTURA%%' AND fecha IS NOT NULL
-    """)
+    # Excluímos los asientos de apertura usando Pandas filtrando el df global ya descargado
+    df_graf = df_mov_global[~df_mov_global["comprobante"].astype(str).str.startswith("ASIENTO-APERTURA")].copy()
     
-    if df_mov.empty:
+    if df_graf.empty:
         st.info("No hay suficientes registros para proyectar gráficas estadísticas.")
     else:
-        df_mov["fecha_dt"] = pd.to_datetime(df_mov["fecha"], errors="coerce")
-        df_mov = df_mov.dropna(subset=["fecha_dt"])
-        df_mov["Anio"] = df_mov["fecha_dt"].dt.year
-        df_mov["MesNum"] = df_mov["fecha_dt"].dt.month
-        df_mov["Mes"] = df_mov["MesNum"].map(core.MESES_NOMBRES)
+        # Enlaza las columnas de SQL a las que necesita el reporte
+        df_graf["Anio"] = df_graf["anio"]
+        df_graf["MesNum"] = df_graf["mes_num"]
+        df_graf["Mes"] = df_graf["MesNum"].map(core.MESES_NOMBRES)
 
-        anios_graf = sorted(list(df_mov["Anio"].unique()), reverse=True)
+        anios_graf = sorted(list(df_graf["Anio"].dropna().unique()), reverse=True)
         
         c_g1, c_g2 = st.columns([2, 2])
         with c_g1:
@@ -491,7 +512,7 @@ elif opcion == "Evolución y Gráficos":
         with c_g2:
             filtro_medio_graf = st.selectbox("Medio de Pago para Ingresos y Egresos:", ["Ambos (Efectivo y Bancos)", "Solo Efectivo", "Solo Depósito / Transferencia (Bancos)"])
 
-        df_anio = df_mov[df_mov["Anio"] == anio_graf].copy()
+        df_anio = df_graf[df_graf["Anio"] == anio_graf].copy()
 
         if filtro_medio_graf == "Solo Efectivo":
             df_anio_medio = df_anio[df_anio["medio"] == "Efectivo"]
@@ -546,12 +567,10 @@ elif opcion == "Evolución y Gráficos":
         st.plotly_chart(fig_egr, use_container_width=True)
 
         # CUADRO 3: DIEZMOS
-        df_dz_bd = core.read_db("SELECT fecha, monto FROM public.diezmos WHERE fecha IS NOT NULL")
+        df_dz_bd = cargar_diezmos_graficos()
         if not df_dz_bd.empty:
-            df_dz_bd["dt"] = pd.to_datetime(df_dz_bd["fecha"], errors="coerce")
-            df_dz_bd = df_dz_bd.dropna(subset=["dt"])
-            df_dz_anio = df_dz_bd[df_dz_bd["dt"].dt.year == anio_graf].copy()
-            df_dz_anio["Mes"] = df_dz_anio["dt"].dt.month.map(core.MESES_NOMBRES)
+            df_dz_anio = df_dz_bd[df_dz_bd["anio"] == anio_graf].copy()
+            df_dz_anio["Mes"] = df_dz_anio["mes_num"].map(core.MESES_NOMBRES)
             s_dz = df_dz_anio.groupby("Mes")["monto"].sum().reindex(core.MESES).fillna(0.0)
             y_diezmos = s_dz.values
         else:
@@ -623,9 +642,9 @@ elif opcion == "Registrar Movimiento":
     t_mov = st.radio("Tipo:", ["Egreso (Gasto)", "Ingreso"], horizontal=True)
     tipo_cl = "Egreso" if "Egreso" in t_mov else "Ingreso"
 
-    cats = core.read_db("SELECT categoria, subcategoria FROM public.rubros_catalogo WHERE tipo=?", (tipo_cl,))
     dict_c = {}
-    if not cats.empty:
+    if not df_rubros_cat.empty:
+        cats = df_rubros_cat[df_rubros_cat["tipo"] == tipo_cl]
         for c, g in cats.groupby("categoria"): 
             dict_c[c] = g["subcategoria"].tolist()
     else:
@@ -654,6 +673,9 @@ elif opcion == "Registrar Movimiento":
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'Cobrado')
             """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp.strip(), det.strip(), resp))
             core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp.strip()})")
+            
+            limpiar_caches_tesoreria()
+            
             st.toast("✅ Movimiento guardado en Tesorería.")
             st.rerun()
 
@@ -662,28 +684,23 @@ elif opcion == "Registrar Movimiento":
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### ⚙️ Gestión de Asientos de Tesorería (Modificar o Eliminar)")
-    df_todos_mov = core.read_db("SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable FROM public.movimientos ORDER BY date(fecha) DESC, id DESC")
-
-    if df_todos_mov.empty:
+    
+    if df_mov_global.empty:
         st.info("No hay transacciones registradas en Tesorería.")
     else:
-        df_todos_mov["dt"] = pd.to_datetime(df_todos_mov["fecha"], errors="coerce")
-        df_todos_mov["anio"] = df_todos_mov["dt"].dt.year
-        df_todos_mov["mes"] = df_todos_mov["dt"].dt.month
-
         with st.expander("🔎 Filtros para Localizar Asiento Contable", expanded=True):
             col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             with col_f1:
                 b_txt = st.text_input("Buscar por Detalle / Comprobante / Responsable:", placeholder="Ej. Luz, CORTE-1, Enel...")
             with col_f2:
-                anios_disp = ["Todos"] + sorted([int(a) for a in df_todos_mov["anio"].dropna().unique()], reverse=True)
+                anios_disp = ["Todos"] + sorted([int(a) for a in df_mov_global["anio"].dropna().unique()], reverse=True)
                 b_anio = st.selectbox("Año:", anios_disp, index=0)
             with col_f3:
                 b_mes = st.selectbox("Mes:", ["Todos"] + core.MESES, index=0)
             with col_f4:
                 b_tipo = st.selectbox("Tipo:", ["Todos", "Ingreso", "Egreso"], index=0)
 
-        df_filtrado_mov = df_todos_mov
+        df_filtrado_mov = df_mov_global
         if b_txt.strip():
             t_l = b_txt.strip().lower()
             df_filtrado_mov = df_filtrado_mov[
@@ -695,11 +712,11 @@ elif opcion == "⚙️ Modificar o Eliminar":
             df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["anio"] == b_anio]
         if b_mes != "Todos":
             mes_num_f = core.MESES.index(b_mes) + 1
-            df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["mes"] == mes_num_f]
+            df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["mes_num"] == mes_num_f]
         if b_tipo != "Todos":
             df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["tipo"] == b_tipo]
 
-        st.caption(f"Coincidencias encontradas: **{len(df_filtrado_mov)}** de {len(df_todos_mov)} transacciones.")
+        st.caption(f"Coincidencias encontradas: **{len(df_filtrado_mov)}** de {len(df_mov_global)} transacciones.")
 
         if df_filtrado_mov.empty:
             st.warning("⚠️ No se encontraron movimientos con los filtros especificados.")
@@ -754,6 +771,9 @@ elif opcion == "⚙️ Modificar o Eliminar":
                     """, (str(e_fecha), e_tipo, e_cat.strip(), e_subcat.strip(), e_fondo, round(float(e_monto), 2), e_medio, e_comp.strip(), e_resp, e_det.strip(), id_mov_sel))
 
                     core.registrar_log("Tesorería", "Edición", f"Actualizado asiento ID #{id_mov_sel} por S/. {e_monto:,.2f}")
+                    
+                    limpiar_caches_tesoreria()
+                    
                     st.toast("✅ Asiento contable actualizado correctamente.")
                     st.rerun()
 
@@ -762,5 +782,10 @@ elif opcion == "⚙️ Modificar o Eliminar":
                 if st.button("Eliminar Definitivamente", type="primary"):
                     core.query_db("DELETE FROM public.movimientos WHERE id=?", (id_mov_sel,))
                     core.registrar_log("Tesorería", "Eliminación", f"Eliminado asiento ID #{id_mov_sel} de S/. {float(reg_mov['monto']):,.2f}")
+                    
+                    limpiar_caches_tesoreria()
+                    
                     st.toast("🗑️ Transacción eliminada de Tesorería.")
                     st.rerun()
+
+core.mostrar_pie_pagina()
