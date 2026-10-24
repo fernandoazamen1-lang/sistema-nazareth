@@ -29,12 +29,43 @@ CATEGORIAS = [
 FONDOS = ["General", "Pro-Templo", "Misiones", "Jóvenes", "Damas", "Caballeros"]
 MEDIOS = ["Efectivo", "Depósito / Transferencia", "Yape / Plin"]
 
+# ==============================================================================
+# OPTIMIZACIÓN DE CACHÉ Y CONSULTAS SQL
+# ==============================================================================
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_pagos_calendario(anio, mes):
+    """Filtra los vencimientos directamente desde PostgreSQL para la cuadrícula"""
+    return core.read_db("""
+        SELECT id, codigo, concepto, categoria, monto, fondo, 
+               CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE) as f_venc, 
+               periodicidad, estado, serie_comprobante, numero_comprobante 
+        FROM public.pagos_programados 
+        WHERE EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE)) <= %s
+        ORDER BY f_venc ASC, id DESC
+    """, (anio,))
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_todos_pagos_gestor():
+    """Trae todos los pagos listos para el gestor avanzado de edición"""
+    return core.read_db("""
+        SELECT *, 
+               EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE)) as anio_venc,
+               EXTRACT(MONTH FROM CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE)) as mes_venc
+        FROM public.pagos_programados 
+        ORDER BY CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE) DESC, id DESC
+    """)
+
+def limpiar_caches_pagos():
+    cargar_pagos_calendario.clear()
+    cargar_todos_pagos_gestor.clear()
+    st.cache_data.clear()
+
 def get_sig_codigo_prg():
-    df_u = core.read_db("SELECT codigo FROM public.pagos_programados WHERE codigo LIKE ? ORDER BY id DESC LIMIT 1", ("PRG-%",))
+    df_u = core.read_db("SELECT codigo FROM public.pagos_programados WHERE codigo LIKE 'PRG-%%' ORDER BY id DESC LIMIT 1")
     if df_u.empty:
         return "PRG-0001"
     try:
-        num = int(df_u.iloc[0]["codigo"].split("-")[-1].strip())
+        num = int(df_u.iloc[0]["codigo"].replace("PRG-", "").strip())
         return f"PRG-{num + 1:04d}"
     except Exception:
         df_cant = core.read_db("SELECT COUNT(*) as t FROM public.pagos_programados")
@@ -62,6 +93,8 @@ def parsear_fecha_segura(valor, default=None):
         default = date.today()
     if pd.isnull(valor) or str(valor).strip().lower() in ("nan", "none", ""):
         return default
+    if isinstance(valor, (date, datetime)):
+        return valor
     try:
         return datetime.strptime(str(valor).strip(), "%Y-%m-%d").date()
     except Exception:
@@ -113,9 +146,8 @@ st.markdown("---")
 # ==============================================================================
 if opcion == "📆 Calendario y Cronograma":
     st.markdown("#### 📆 Calendario Mensual de Vencimientos y Compromisos")
-    df_todos = core.read_db("SELECT id, codigo, concepto, categoria, monto, fondo, fecha_vencimiento, periodicidad, estado, serie_comprobante, numero_comprobante FROM public.pagos_programados ORDER BY CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE) ASC, id DESC")
-
     hoy = date.today()
+    
     c_f1, c_f2 = st.columns(2)
     with c_f1:
         anio_sel = st.selectbox("Año a visualizar:", list(range(hoy.year - 3, hoy.year + 4)), index=3, key="cal_anio")
@@ -123,13 +155,19 @@ if opcion == "📆 Calendario y Cronograma":
         mes_sel = st.selectbox("Mes a visualizar:", core.MESES, index=hoy.month - 1, key="cal_mes")
 
     mes_num = core.MESES.index(mes_sel) + 1
+    
+    # Consulta SQL optimizada
+    df_todos = cargar_pagos_calendario(anio_sel, mes_num)
 
     pagos_este_mes = []
     if not df_todos.empty:
         for _, r in df_todos.iterrows():
-            fv = parsear_fecha_segura(r.get("fecha_vencimiento"), None)
-            if not fv:
+            fv = r.get("f_venc")
+            if pd.isnull(fv):
                 continue
+            
+            # Formateo correcto en caso de que SQL retorne texto en lugar de date
+            fv = parsear_fecha_segura(fv)
 
             period = str(r.get("periodicidad") or "Mensual")
             s_comp = str(r.get("serie_comprobante") or "")
@@ -295,7 +333,7 @@ elif opcion == "➕ Programar Compromiso":
                         """
                         execute_batch(cur, sql_lote, filas_lote, page_size=100)
                     conn.commit()
-                st.cache_data.clear()
+                limpiar_caches_pagos()
                 st.toast(f"✅ Se programaron {meses_a_generar} meses consecutivos.")
             else:
                 core.query_db("""
@@ -303,6 +341,7 @@ elif opcion == "➕ Programar Compromiso":
                     (codigo, concepto, categoria, monto, fondo, fecha_vencimiento, periodicidad, estado, serie_comprobante, numero_comprobante, observaciones)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'Pendiente', '', '', ?)
                 """, (sig_cod, concepto.strip(), categoria, monto_previsto, fondo_cargo, str(fecha_venc), periodicidad, observaciones.strip()))
+                limpiar_caches_pagos()
                 st.toast(f"✅ Compromiso {sig_cod} agendado correctamente.")
 
             core.registrar_log("Pagos Programados", "Agendado", f"{concepto.strip()} por S/. {monto_previsto:,.2f}")
@@ -377,6 +416,7 @@ elif opcion == "💳 Ejecutar Pago (Liquidar)":
             )
 
             core.registrar_log("Pagos Programados", "Liquidación", f"Liquidado {reg_pago['codigo']} | Comprobante {folio_final} por S/. {monto_pagado:,.2f}")
+            limpiar_caches_pagos()
             st.toast(f"✅ Pago liquidado con comprobante {folio_final} ({tipo_asignado}).")
             st.rerun()
 
@@ -385,15 +425,12 @@ elif opcion == "💳 Ejecutar Pago (Liquidar)":
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### 🔍 Búsqueda y Gestión de Compromisos")
-    df_todos_gest = core.read_db("SELECT * FROM public.pagos_programados ORDER BY CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE) DESC, id DESC")
+    
+    df_todos_gest = cargar_todos_pagos_gestor()
 
     if df_todos_gest.empty:
         st.info("No hay registros en la base de datos para gestionar.")
     else:
-        df_todos_gest["dt_venc"] = pd.to_datetime(df_todos_gest["fecha_vencimiento"], errors="coerce")
-        df_todos_gest["anio_venc"] = df_todos_gest["dt_venc"].dt.year
-        df_todos_gest["mes_venc"] = df_todos_gest["dt_venc"].dt.month
-
         with st.expander("🔎 Panel de Filtros para Localizar Compromiso", expanded=True):
             col_f1, col_f2, col_f3 = st.columns(3)
             with col_f1:
@@ -523,6 +560,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                         )
 
                     core.registrar_log("Pagos Programados", "Edición", f"Actualizado {reg_mod['codigo']} | Comprobante: {folio_nuevo}")
+                    limpiar_caches_pagos()
                     st.toast(f"✅ Cambios guardados y Tesorería sincronizada ({folio_nuevo}).")
                     st.rerun()
 
@@ -550,6 +588,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                         core.query_db("DELETE FROM public.pagos_programados WHERE id=?", (id_mod,))
                         core.query_db("DELETE FROM public.movimientos WHERE comprobante=? OR comprobante=?", (folio_del, reg_mod["codigo"]))
                         core.registrar_log("Pagos Programados", "Eliminación Puntual", f"Eliminada cuota {reg_mod['codigo']}")
+                        limpiar_caches_pagos()
                         st.toast(f"🗑️ Cuota {reg_mod['codigo']} eliminada correctamente.")
                         st.rerun()
 
@@ -579,5 +618,8 @@ elif opcion == "⚙️ Modificar o Eliminar":
                         )
 
                         core.registrar_log("Pagos Programados", "Eliminación Serie General", f"Eliminada serie completa '{concepto_raiz}' ({cant_serie} registros)")
+                        limpiar_caches_pagos()
                         st.toast(f"🗑️ Serie '{concepto_raiz}' eliminada.")
                         st.rerun()
+
+core.mostrar_pie_pagina()
