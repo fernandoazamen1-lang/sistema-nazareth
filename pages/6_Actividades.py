@@ -18,10 +18,27 @@ core.aplicar_estilos_base()
 
 st.subheader("🍲 Gestión de Actividades y Platos Pro-Fondos")
 
-# Carga de actividades en memoria
-df_act = core.read_db("SELECT id, nombre, fecha, responsable, descripcion, ultima_fecha_corte FROM public.actividades ORDER BY date(fecha) DESC, id DESC")
+# ==============================================================================
+# OPTIMIZACIÓN CON CACHÉ DE DATOS
+# ==============================================================================
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_lista_actividades():
+    return core.read_db("SELECT id, nombre, fecha, responsable, descripcion, ultima_fecha_corte FROM public.actividades ORDER BY date(fecha) DESC, id DESC")
 
-# Generadores de PDF bajo demanda
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_movimientos_actividad(act_id):
+    return core.read_db("SELECT * FROM public.actividad_movimientos WHERE id_actividad=%s ORDER BY id DESC", (act_id,))
+
+def limpiar_caches_actividades():
+    cargar_lista_actividades.clear()
+    cargar_movimientos_actividad.clear()
+    st.cache_data.clear()
+
+df_act = cargar_lista_actividades()
+
+# ==============================================================================
+# GENERADORES DE PDF BAJO DEMANDA
+# ==============================================================================
 def generar_pdf_acta(nom_act, fecha_corte, cod_corte, df_liq, ing_cont, ing_cred, tot_egr, saldo_neto, tot_cred_pend, resp_act, fondo_dest):
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -148,6 +165,9 @@ def generar_pdf_creditos_pendientes(nom_act, df_creditos, total_pendiente):
     doc.build(elem)
     return buf.getvalue()
 
+# ==============================================================================
+# FLUJO PRINCIPAL
+# ==============================================================================
 if df_act.empty:
     st.info("No hay actividades registradas. Cree una a continuación:")
     with st.form("form_nueva_act_init"):
@@ -161,6 +181,7 @@ if df_act.empty:
                 core.query_db("INSERT INTO public.actividades (nombre, fecha, responsable, descripcion, ultima_fecha_corte) VALUES (?, ?, ?, ?, '')",
                               (nom.strip(), str(fec), resp, desc.strip()))
                 core.registrar_log("Actividades", "Crear", f"Creada actividad {nom.strip()}")
+                limpiar_caches_actividades()
                 st.toast("✅ Actividad creada.")
                 st.rerun()
 else:
@@ -172,7 +193,8 @@ else:
     opcion = st.radio("Sección:", ["Resumen Financiero", "Registrar Movimiento", "Créditos por Cobrar", "Corte y Acta PDF", "Administrar"], horizontal=True)
     st.markdown("---")
 
-    df_mov_act = core.read_db("SELECT * FROM public.actividad_movimientos WHERE id_actividad=? ORDER BY id DESC", (id_act,))
+    # Carga de movimientos con caché aislada por actividad
+    df_mov_act = cargar_movimientos_actividad(id_act)
 
     tot_cont = float(df_mov_act[(df_mov_act["tipo"] == "Ingreso") & (df_mov_act["condicion"] == "Contado")]["monto"].sum()) if not df_mov_act.empty else 0.0
     tot_cred_cob = float(df_mov_act[(df_mov_act["tipo"] == "Ingreso") & (df_mov_act["condicion"] == "Credito") & (df_mov_act["estado_cobro"] == "Cobrado")]["monto"].sum()) if not df_mov_act.empty else 0.0
@@ -244,6 +266,9 @@ else:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Efectivo', ?, 0)
                     """, (id_act, str(fec_m), tipo_cl, concepto.strip(), round(float(monto), 2), cond_cl, deudor.strip(), est_cob, fondo))
                     core.registrar_log("Actividades", "Registro", f"{tipo_cl} S/. {monto:,.2f} en {datos_act['nombre']}")
+                    
+                    limpiar_caches_actividades()
+                    
                     st.toast("✅ Transacción registrada con éxito.")
                     st.rerun()
 
@@ -278,6 +303,9 @@ else:
                         if st.button("✅ Marcar Pagado", key=f"cob_{r['id']}", type="primary"):
                             core.query_db("UPDATE public.actividad_movimientos SET estado_cobro='Cobrado' WHERE id=?", (r["id"],))
                             core.registrar_log("Actividades", "Cobro", f"Cobrado S/. {r['monto']} a {r['cliente_deudor']}")
+                            
+                            limpiar_caches_actividades()
+                            
                             st.toast("✅ Crédito cobrado y actualizado.")
                             st.rerun()
                 st.divider()
@@ -321,6 +349,9 @@ else:
                 core.query_db("UPDATE public.actividades SET ultima_fecha_corte=? WHERE id=?", (hoy_str, id_act))
                 
                 core.registrar_log("Actividades", "Corte", f"Corte ejecutado {cod_corte} en {act_sel} por S/. {saldo_disp:,.2f}")
+                
+                limpiar_caches_actividades()
+                
                 st.session_state["pdf_corte"] = pdf_bytes
                 st.session_state["cod_corte"] = cod_corte
                 st.success("🎉 ¡Corte completado y transferido a Tesorería!")
@@ -346,6 +377,7 @@ else:
                     if nom.strip():
                         core.query_db("INSERT INTO public.actividades (nombre, fecha, responsable, descripcion, ultima_fecha_corte) VALUES (?, ?, ?, ?, '')", (nom.strip(), str(fec), resp, desc.strip()))
                         core.registrar_log("Actividades", "Crear", f"Creada actividad {nom.strip()}")
+                        limpiar_caches_actividades()
                         st.toast("✅ Creada con éxito.")
                         st.rerun()
         with c_a2:
@@ -355,5 +387,8 @@ else:
                 core.query_db("DELETE FROM public.actividad_movimientos WHERE id_actividad=?", (id_act,))
                 core.query_db("DELETE FROM public.actividades WHERE id=?", (id_act,))
                 core.registrar_log("Actividades", "Eliminar", f"Eliminada actividad {act_sel}")
+                limpiar_caches_actividades()
                 st.toast("🗑️ Actividad eliminada.")
                 st.rerun()
+
+core.mostrar_pie_pagina()
