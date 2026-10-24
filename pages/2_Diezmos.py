@@ -33,28 +33,29 @@ def cargar_catalogos_diezmos():
 d_miembros, d_telefonos, tesorero_def = cargar_catalogos_diezmos()
 
 # ==============================================================================
-# CONSULTAS SQL OPTIMIZADAS CON CACHÉ
+# CONSULTAS SQL OPTIMIZADAS CON CACHÉ (CORREGIDO ERROR UNDEFINEDFUNCTION)
 # ==============================================================================
 @st.cache_data(ttl=300, show_spinner=False)
 def cargar_diezmos_mes(anio, num_m):
-    """Filtra los datos directamente en PostgreSQL (Ultrarrápido)"""
+    """Filtra los datos directamente en PostgreSQL convirtiendo texto a fecha"""
     return core.read_db("""
         SELECT 
             id, fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle,
             COALESCE(codigo_comprobante, 'D - ' || LPAD(id::text, 5, '0')) AS serie_constancia
         FROM public.diezmos 
-        WHERE EXTRACT(YEAR FROM fecha) = %s AND EXTRACT(MONTH FROM fecha) = %s
+        WHERE EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) = %s 
+          AND EXTRACT(MONTH FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) = %s
         ORDER BY fecha DESC, id DESC
     """, (anio, num_m))
 
 @st.cache_data(ttl=300, show_spinner=False)
 def cargar_diezmos_busqueda():
-    """Carga simplificada para el buscador general con año pre-calculado en BD"""
+    """Carga simplificada para el buscador general con conversión de texto a fecha"""
     return core.read_db("""
         SELECT 
             id, fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle,
             COALESCE(codigo_comprobante, 'D - ' || LPAD(id::text, 5, '0')) AS serie_constancia,
-            EXTRACT(YEAR FROM fecha) AS anio_abono
+            EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) AS anio_abono
         FROM public.diezmos 
         ORDER BY id DESC
     """)
