@@ -17,9 +17,9 @@ core.verificar_acceso_pagina("Sostenimiento Pastoral")
 core.aplicar_estilos_base()
 
 # ==============================================================================
-# CARGA DE CONFIGURACIÓN PERSISTENTE EN MEMORIA (OPTIMIZADA)
+# CARGA DE CONFIGURACIÓN PERSISTENTE Y CACHÉ (OPTIMIZADA)
 # ==============================================================================
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def cargar_config_pastoral():
     df = core.read_db("""
         SELECT modulo, descripcion 
@@ -39,12 +39,30 @@ def cargar_config_pastoral():
 
 pastor_p_def, dni_p_def, tesorero_def = cargar_config_pastoral()
 
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_anios_disponibles_pastoral():
+    df_anios = core.read_db("SELECT DISTINCT EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) as anio FROM public.sostenimiento_pastoral")
+    anios_bd = set(df_anios["anio"].dropna().astype(int).unique()) if not df_anios.empty else set()
+    anio_actual = date.today().year
+    anios_rango = set(range(anio_actual - 4, anio_actual + 5))
+    return sorted(list(anios_rango.union(anios_bd)), reverse=True)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_gestion_pastoral():
+    return core.read_db("SELECT * FROM public.sostenimiento_pastoral ORDER BY id DESC")
+
+def limpiar_caches_pastoral():
+    cargar_anios_disponibles_pastoral.clear()
+    cargar_gestion_pastoral.clear()
+    st.cache_data.clear()
+
 def _set_config(modulo, nuevo_val, actual_val):
     if nuevo_val.strip() and nuevo_val.strip() != actual_val:
         core.query_db(
             "INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (?, ?, 'Actualizar', ?)",
             (str(date.today()), modulo, nuevo_val.strip())
         )
+        cargar_config_pastoral.clear()
 
 # Lógica correlativa y contable
 def get_sig_codigo(prefijo):
@@ -315,6 +333,8 @@ if opcion == "✍️ Registrar Sostenimiento u Ofrenda":
             _sincronizar_asiento_tesoreria(f_emision, tipo_db, neto_final, medio_pago, codigo_asignado, periodo_concepto if es_principal else motivo_desc, pastor_nombre.strip(), tesorero_resp.strip(), es_update=False)
             core.registrar_log("Pastoral", "Egreso", f"{codigo_asignado} a {pastor_nombre.strip()} por S/. {neto_final:,.2f} neto")
 
+            limpiar_caches_pastoral()
+
             st.session_state["ultimo_comprobante"] = {
                 "codigo": codigo_asignado, "fecha": str(f_emision), "pastor": pastor_nombre.strip(), "dni": pastor_dni.strip(),
                 "tipo": tipo_db, "mes": periodo_concepto, "bruto": monto_bruto, "desc_pension": desc_pension, "essalud": essalud_aporte,
@@ -337,21 +357,13 @@ if opcion == "✍️ Registrar Sostenimiento u Ofrenda":
         )
 
 # ==============================================================================
-# 2. CONSULTAS Y REPORTES
+# 2. CONSULTAS Y REPORTES (OPTIMIZADO SQL)
 # ==============================================================================
 elif opcion == "📋 Consultas y Reportes Consolidados":
     st.markdown("#### 📋 Consultas Consolidadas y Reporte Mensual")
-    df_base = core.read_db("SELECT * FROM public.sostenimiento_pastoral ORDER BY CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE) DESC, id DESC")
-
+    
+    anios_disp = cargar_anios_disponibles_pastoral()
     anio_actual = date.today().year
-    anios_rango = set(range(anio_actual - 4, anio_actual + 5))
-    if not df_base.empty:
-        df_base["dt"] = pd.to_datetime(df_base["fecha"], errors="coerce")
-        anios_bd = set(df_base["dt"].dt.year.dropna().astype(int).unique())
-        anios_disp = sorted(list(anios_rango.union(anios_bd)), reverse=True)
-    else:
-        anios_disp = sorted(list(anios_rango), reverse=True)
-
     idx_anio_def = anios_disp.index(anio_actual) if anio_actual in anios_disp else 0
 
     c_v1, c_v2, c_v3 = st.columns(3)
@@ -359,12 +371,19 @@ elif opcion == "📋 Consultas y Reportes Consolidados":
     with c_v2: anio_sel = st.selectbox("Año:", anios_disp, index=idx_anio_def)
     with c_v3: mes_sel = st.selectbox("Mes:", ["Todos"] + core.MESES, index=0)
 
-    if df_base.empty:
+    # Filtrar directo en SQL para ahorrar memoria y red
+    df_filtrado = core.read_db("""
+        SELECT * FROM public.sostenimiento_pastoral 
+        WHERE EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) = %s
+        ORDER BY fecha DESC, id DESC
+    """, (anio_sel,))
+
+    if df_filtrado.empty:
         st.info(f"No hay registros de sostenimiento u ofrendas para el año {anio_sel}.")
     else:
-        df_filtrado = df_base[df_base["dt"].dt.year == anio_sel].copy()
         if mes_sel != "Todos":
             df_filtrado = df_filtrado[df_filtrado["mes"] == mes_sel]
+        
         if filtro_vista == "Solo Pastor Principal":
             df_filtrado = df_filtrado[df_filtrado["tipo_beneficiario"] == "Principal"]
         elif filtro_vista == "Solo Pastores Invitados / Eventuales":
@@ -446,7 +465,8 @@ elif opcion == "📋 Consultas y Reportes Consolidados":
 # ==============================================================================
 elif opcion == "⚙️ Gestión de Comprobantes (Editar / Eliminar)":
     st.markdown("#### ⚙️ Gestión de Comprobantes (Editar / Eliminar)")
-    df_gestion = core.read_db("SELECT * FROM public.sostenimiento_pastoral ORDER BY id DESC")
+    
+    df_gestion = cargar_gestion_pastoral()
 
     if df_gestion.empty:
         st.info("No hay comprobantes disponibles para gestionar.")
@@ -508,6 +528,8 @@ elif opcion == "⚙️ Gestión de Comprobantes (Editar / Eliminar)":
                 _sincronizar_asiento_tesoreria(e_fecha, reg["tipo_beneficiario"], e_neto, e_medio, reg["codigo"], e_motivo.strip(), e_nombre.strip(), e_tesorero.strip(), es_update=True)
                 core.registrar_log("Pastoral", "Edición", f"Actualizado comprobante {reg['codigo']}")
 
+                limpiar_caches_pastoral()
+
                 st.session_state["ultimo_comprobante"] = {
                     "codigo": reg["codigo"], "fecha": str(e_fecha), "pastor": e_nombre.strip(), "dni": e_dni.strip(),
                     "tipo": reg["tipo_beneficiario"], "mes": e_mes, "bruto": e_monto, "desc_pension": e_desc,
@@ -523,7 +545,12 @@ elif opcion == "⚙️ Gestión de Comprobantes (Editar / Eliminar)":
                 core.query_db("DELETE FROM public.sostenimiento_pastoral WHERE id=?", (id_gestion,))
                 core.query_db("DELETE FROM public.movimientos WHERE comprobante=?", (reg["codigo"],))
                 core.registrar_log("Pastoral", "Eliminación", f"Eliminado comprobante {reg['codigo']}")
+                
+                limpiar_caches_pastoral()
+                
                 if "ultimo_comprobante" in st.session_state:
                     del st.session_state["ultimo_comprobante"]
                 st.toast(f"🗑️ Comprobante {reg['codigo']} eliminado.")
                 st.rerun()
+
+core.mostrar_pie_pagina()
