@@ -1,4 +1,5 @@
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 import pandas as pd
 from contextlib import contextmanager
@@ -32,17 +33,31 @@ MAPA_MODULOS_SIDEBAR = {
 }
 
 # ==============================================================================
-# GESTIÓN DE CONEXIÓN A SUPABASE
+# GESTIÓN DE CONEXIÓN A SUPABASE (OPTIMIZADO CON CONNECTION POOL)
 # ==============================================================================
+@st.cache_resource(ttl=3600)
+def get_connection_pool():
+    """Crea un pool de conexiones persistente para evitar latencia de red."""
+    url = st.secrets["SUPABASE_DB_URL"]
+    # Mantiene entre 1 y 10 conexiones vivas simultáneamente
+    return psycopg2.pool.SimpleConnectionPool(1, 10, url, cursor_factory=RealDictCursor)
+
 @contextmanager
 def get_db():
-    url = st.secrets["SUPABASE_DB_URL"]
-    conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
+    """Administra la entrega y devolución de conexiones al pool."""
+    db_pool = get_connection_pool()
     try:
+        conn = db_pool.getconn()
+        # Si la conexión se cerró por inactividad del servidor, limpiar caché y reconectar
+        if conn.closed:
+            st.cache_resource.clear()
+            db_pool = get_connection_pool()
+            conn = db_pool.getconn()
+            
         yield conn
     finally:
         try:
-            conn.close()
+            db_pool.putconn(conn) # Devuelve la conexión al pool en lugar de cerrarla
         except Exception:
             pass
 
@@ -247,6 +262,8 @@ def query_db(query, params=(), commit=True):
                     pass
             if commit:
                 conn.commit()
+                # NOTA: st.cache_data.clear() vacía la memoria de todo el programa al registrar algo. 
+                # En el futuro, lo ideal es reemplazar esto por un borrado específico (ej. cargar_datos.clear())
                 st.cache_data.clear()
             return inserted_id
 
