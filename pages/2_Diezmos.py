@@ -33,11 +33,10 @@ def cargar_catalogos_diezmos():
 d_miembros, d_telefonos, tesorero_def = cargar_catalogos_diezmos()
 
 # ==============================================================================
-# CONSULTAS SQL OPTIMIZADAS CON CACHÉ (CORREGIDO ERROR UNDEFINEDFUNCTION)
+# CONSULTAS SQL OPTIMIZADAS CON CACHÉ
 # ==============================================================================
 @st.cache_data(ttl=300, show_spinner=False)
 def cargar_diezmos_mes(anio, num_m):
-    """Filtra los datos directamente en PostgreSQL convirtiendo texto a fecha"""
     return core.read_db("""
         SELECT 
             id, fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle,
@@ -50,7 +49,6 @@ def cargar_diezmos_mes(anio, num_m):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def cargar_diezmos_busqueda():
-    """Carga simplificada para el buscador general con conversión de texto a fecha"""
     return core.read_db("""
         SELECT 
             id, fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle,
@@ -60,10 +58,25 @@ def cargar_diezmos_busqueda():
         ORDER BY id DESC
     """)
 
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_diezmos_matriz(anio):
+    """Carga de datos específica para alimentar las matrices anuales"""
+    return core.read_db("""
+        SELECT 
+            nombre_miembro, 
+            mes AS mes_correspondiente, 
+            monto, 
+            fecha,
+            EXTRACT(MONTH FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) AS mes_abono_num
+        FROM public.diezmos 
+        WHERE EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) = %s
+    """, (anio,))
+
 def limpiar_caches_diezmos():
     cargar_diezmos_mes.clear()
     cargar_diezmos_busqueda.clear()
-    st.cache_data.clear() # Limpia también la general de core.py
+    cargar_diezmos_matriz.clear()
+    st.cache_data.clear()
 
 # ==============================================================================
 # MOTOR TIPOGRÁFICO UNICODE GARANTIZADO
@@ -90,7 +103,6 @@ def get_font(size, bold=False):
                 return ImageFont.truetype(r, int(size))
             except Exception:
                 pass
-
     try:
         return ImageFont.load_default(size=int(size))
     except Exception:
@@ -109,17 +121,14 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     img = Image.new("RGB", (w, h), "#F8FAFC")
     dr = ImageDraw.Draw(img)
 
-    # 1. Bordes exteriores
     dr.rounded_rectangle([(16, 16), (w - 16, h - 16)], 20, fill="#FFFFFF", outline="#1E3A8A", width=3)
     dr.rounded_rectangle([(24, 24), (w - 24, h - 24)], 16, outline="#CA8A04", width=1)
 
-    # 2. Encabezado institucional azul
     dr.rounded_rectangle([(32, 32), (w - 32, 165)], 14, fill="#1E3A8A")
     draw_center(dr, 46, 'IGLESIA EVANGÉLICA "NAZARETH"', get_font(23, True), "#FFFFFF", w)
     draw_center(dr, 85, "ASAMBLEAS DE DIOS DEL PERÚ  •  DEPARTAMENTO DE TESORERÍA", get_font(13, True), "#93C5FD", w)
     draw_center(dr, 120, f"CONSTANCIA DE DIEZMO:  {serie}", get_font(17, True), "#FDE047", w)
 
-    # 3. Datos del aportante
     dr.rounded_rectangle([(42, 185), (w - 42, 475)], 12, fill="#FFFFFF", outline="#E2E8F0", width=1)
     rows = [
         ("Hermano(a) Aportante:", str(nombre).strip().upper()[:36]),
@@ -135,26 +144,22 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
         dr.line([(65, y + 36), (w - 65, y + 36)], fill="#F1F5F9", width=1)
         y += 52
 
-    # 4. Recuadro del monto
     dr.rounded_rectangle([(42, 495), (w - 42, 615)], 14, fill="#FEF9C3", outline="#EAB308", width=2)
     draw_center(dr, 510, "TOTAL APORTE ENTREGADO", get_font(15, True), "#854D0E", w)
     draw_center(dr, 542, f"S/. {float(monto):,.2f}", get_font(38, True), "#1E3A8A", w)
 
-    # 5. Gratitud pastoral
     dr.rounded_rectangle([(42, 635), (w - 42, 775)], 12, fill="#F0FDF4", outline="#86EFAC", width=1)
     draw_center(dr, 650, "❤️  PALABRAS DE GRATITUD PASTORAL", get_font(15, True), "#166534", w)
     draw_center(dr, 684, "¡Muchas gracias por su fidelidad, amor y compromiso con la obra de Dios!", get_font(14), "#1F2937", w)
     draw_center(dr, 712, "Oramos para que el Señor derrame abundantes bendiciones sobre su vida,", get_font(14), "#1F2937", w)
     draw_center(dr, 738, "multiplique su siembra y guarde con paz y provisión a toda su amada familia.", get_font(14), "#1F2937", w)
 
-    # 6. Versículo bíblico
     dr.rounded_rectangle([(42, 795), (w - 42, 945)], 12, fill="#F8FAFC", outline="#E2E8F0", width=1)
     draw_center(dr, 810, "PALABRA DE DIOS SOBRE EL DAR:", get_font(14, True), "#1E40AF", w)
     draw_center(dr, 842, "«Cada uno dé como propuso en su corazón: no con tristeza,", get_font(14), "#334155", w)
     draw_center(dr, 870, "ni por necesidad, porque Dios ama al dador alegre.»", get_font(14), "#334155", w)
     draw_center(dr, 904, "— 2 Corintios 9:7 —", get_font(14, True), "#047857", w)
 
-    # 7. Certificación y Tesorería
     dr.rounded_rectangle([(42, 965), (w - 42, 1105)], 12, fill="#F1F5F9", outline="#CBD5E1", width=1)
     draw_center(dr, 980, "RECEPCIONADO Y CERTIFICADO FORMALMENTE POR:", get_font(13), "#64748B", w)
     draw_center(dr, 1012, str(tesorero).upper(), get_font(16, True), "#0F172A", w)
@@ -238,6 +243,9 @@ def panel_whatsapp_descarga(d):
             unsafe_allow_html=True
         )
 
+# ==============================================================================
+# GENERADORES PDF/EXCEL
+# ==============================================================================
 def generar_pdf_reporte_mensual(df_mes_rep, anio_rep, mes_rep, tot_m, efe_m, ban_m):
     from reportlab.lib.pagesizes import letter, landscape
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -335,11 +343,71 @@ def generar_pdf_reporte_mensual(df_mes_rep, anio_rep, mes_rep, tot_m, efe_m, ban
     doc.build(elem)
     return buf.getvalue()
 
+def generar_pdf_matriz_diezmos(df_matriz, anio_rep, tipo_matriz):
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=20, rightMargin=20, topMargin=25, bottomMargin=25)
+    elem = []
+    
+    titulo = f"MATRIZ DE CUMPLIMIENTO DE DIEZMOS — AÑO {anio_rep}" if tipo_matriz == "cumplimiento" else f"MATRIZ DE APORTES FINANCIEROS POR MES DE ABONO — AÑO {anio_rep}"
+    
+    t_head = Table([[
+        Paragraph(f"<b>IGLESIA EVANGÉLICA \"NAZARETH\"</b><br/><font size=9>{titulo}</font>", ParagraphStyle('H1', fontName='Helvetica-Bold', fontSize=11, textColor=colors.HexColor("#1E3A8A"))),
+        Paragraph(f"<b>Emisión:</b> {date.today().strftime('%d/%m/%Y')}", ParagraphStyle('H2', fontName='Helvetica', fontSize=8, alignment=2))
+    ]], colWidths=[600, 150])
+    elem.extend([t_head, Spacer(1, 15)])
+
+    cols = df_matriz.columns.tolist()
+    filas = [cols]
+    for _, r in df_matriz.iterrows():
+        if tipo_matriz == "aportes":
+            if r[cols[0]] == "TOTAL GENERAL DE ABONOS":
+                fila = [str(r[cols[0]])] + [f"{float(r[c]):,.2f}" if r[c] > 0 else "-" for c in cols[1:]]
+            else:
+                fila = [str(r[cols[0]])[:25]] + [f"{float(r[c]):,.2f}" if float(r[c]) > 0 else "-" for c in cols[1:]]
+        else:
+            fila = [str(r[cols[0]])[:25]] + [str(r[c]) for c in cols[1:]]
+        filas.append(fila)
+
+    cw = [140] + [45]*(len(cols)-2) + [50]
+    
+    t_tabla = Table(filas, colWidths=cw)
+    style = [
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#1E3A8A")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 7),
+        ('ALIGN', (1,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 3)
+    ]
+    if tipo_matriz == "aportes":
+        style.append(('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#FEF08A")))
+        style.append(('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'))
+        
+    t_tabla.setStyle(TableStyle(style))
+    elem.append(t_tabla)
+    
+    doc.build(elem)
+    return buf.getvalue()
+
+def generar_excel_matrices(df_c, df_a, anio):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_c.to_excel(writer, index=False, sheet_name=f"Cumplimiento_{anio}")
+        df_a.to_excel(writer, index=False, sheet_name=f"Aportes_{anio}")
+    return output.getvalue()
+
 # --- MENÚ PRINCIPAL ---
 st.subheader("📖 Módulo de Diezmos y Emisión de Constancias")
 opcion = st.radio(
     "Acción:", 
-    ["Registrar Nuevo Diezmo", "Ver Registros por Mes", "Ficha Individual Oficial", "⚙️ Modificar o Eliminar"], 
+    ["Registrar Nuevo Diezmo", "Ver Registros por Mes", "Ficha Individual Oficial", "📊 Matriz Anual de Diezmos", "⚙️ Modificar o Eliminar"], 
     horizontal=True
 )
 
@@ -378,7 +446,6 @@ if opcion == "Registrar Nuevo Diezmo":
                 )
                 core.registrar_log("Diezmos", "Registro", f"Diezmo {nom} S/. {monto:,.2f} ({sig_cod})")
                 
-                # Invalidamos la caché de reportes
                 limpiar_caches_diezmos()
 
                 st.session_state["ultimo_dz"] = {
@@ -402,7 +469,6 @@ elif opcion == "Ver Registros por Mes":
     with c2: mes_s = st.selectbox("Mes de Abono:", core.MESES, index=date.today().month - 1)
     with c3: med_s = st.selectbox("Medio:", ["Todos", "Efectivo", "Depósito / Transferencia"])
 
-    # Consulta optimizada que trae solo el mes seleccionado usando SQL
     df_f = cargar_diezmos_mes(anio_s, core.MESES_NUM[mes_s])
     
     if not df_f.empty:
@@ -464,10 +530,7 @@ elif opcion == "Ver Registros por Mes":
                         (f_fin, round(float(ban), 2), c_ban, f"Diezmos banco {mes_s} {anio_s}")
                     )
                 core.registrar_log("Diezmos", "Tesorería", f"Asentados diezmos de {mes_s} {anio_s}")
-                
-                # Se actualizaron los movimientos, refrescamos el panel general
                 st.cache_data.clear()
-                
                 st.toast("✅ Asientos asentados en Tesorería con éxito.")
                 st.rerun()
             except Exception as err:
@@ -559,7 +622,7 @@ elif opcion == "Ficha Individual Oficial":
             ])
             firmas = Table([
                 ["__________________________________________", "__________________________________________"],
-                ["TESORERO(A) GENERAL", "MIEMBRO CONFORME"],
+                ["TESORERÍA GENERAL", "MIEMBRO CONFORME"],
                 ["Iglesia Evangélica 'Nazareth'", f"DNI: {d_miembros[hno]}"]
             ], colWidths=[270, 270], style=[
                 ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,1), (-1,1), 'Helvetica-Bold'),
@@ -577,12 +640,106 @@ elif opcion == "Ficha Individual Oficial":
         )
 
 # ==============================================================================
-# 4. MODIFICAR O ELIMINAR CON FILTROS
+# 4. MATRIZ ANUAL DE DIEZMOS (CUMPLIMIENTO Y FINANCIERO)
+# ==============================================================================
+elif opcion == "📊 Matriz Anual de Diezmos":
+    st.markdown("#### 📊 Matriz Anual de Diezmos (Visión Gerencial)")
+    anio_sel = st.selectbox("Seleccione el Año de Abono:", list(range(date.today().year - 4, date.today().year + 5)), index=4)
+    
+    df_d = cargar_diezmos_matriz(anio_sel)
+    
+    # Procesar datos de las matrices en Python (Pandas)
+    todas_filas_cump = []
+    todas_filas_aport = []
+    
+    totales_meses = {m: 0.0 for m in core.MESES}
+    total_anual_general = 0.0
+    
+    nombres_ordenados = sorted(list(d_miembros.keys()))
+    
+    for nombre in nombres_ordenados:
+        pagos_hno = df_d[df_d["nombre_miembro"] == nombre] if not df_d.empty else pd.DataFrame()
+        
+        fila_c = {"Hermano(a)": nombre}
+        fila_a = {"Hermano(a)": nombre}
+        
+        count_cumplidos = 0
+        suma_hno = 0.0
+        
+        for i, m in enumerate(core.MESES):
+            m_num = i + 1
+            
+            # Matriz 1: Cumplimiento por "Mes Correspondiente"
+            if not pagos_hno.empty and m in pagos_hno["mes_correspondiente"].values:
+                fila_c[m] = "✅"
+                count_cumplidos += 1
+            else:
+                fila_c[m] = "❌"
+                
+            # Matriz 2: Aportes por "Mes de Abono Real"
+            monto_mes = pagos_hno[pagos_hno["mes_abono_num"] == m_num]["monto"].sum() if not pagos_hno.empty else 0.0
+            fila_a[m] = monto_mes
+            suma_hno += monto_mes
+            totales_meses[m] += monto_mes
+            
+        fila_c["Total Meses"] = f"{count_cumplidos}/12"
+        fila_a["Total Anual"] = suma_hno
+        total_anual_general += suma_hno
+        
+        todas_filas_cump.append(fila_c)
+        todas_filas_aport.append(fila_a)
+
+    df_cump = pd.DataFrame(todas_filas_cump)
+    df_aportes = pd.DataFrame(todas_filas_aport)
+    
+    # Agregar fila de TOTAL GENERAL en Matriz de Aportes
+    fila_total = {"Hermano(a)": "TOTAL GENERAL DE ABONOS"}
+    for m in core.MESES:
+        fila_total[m] = totales_meses[m]
+    fila_total["Total Anual"] = total_anual_general
+    df_aportes = pd.concat([df_aportes, pd.DataFrame([fila_total])], ignore_index=True)
+
+    tab1, tab2 = st.tabs(["✅ Matriz de Cumplimiento (Por Mes Pagado)", "💰 Matriz de Aportes (Por Fecha Real)"])
+    
+    with tab1:
+        st.caption("Muestra un `✅` si el miembro abonó el diezmo correspondiente a dicho mes, sin importar en qué fecha lo pagó.")
+        st.dataframe(df_cump, use_container_width=True, hide_index=True)
+        st.download_button(
+            "📄 Descargar Matriz de Cumplimiento en PDF",
+            data=lambda: generar_pdf_matriz_diezmos(df_cump, anio_sel, "cumplimiento"),
+            file_name=f"Matriz_Cumplimiento_{anio_sel}.pdf",
+            mime="application/pdf"
+        )
+        
+    with tab2:
+        st.caption("Suma los montos en Soles (S/.) que ingresaron a Tesorería en cada mes específico, independientemente del mes que esté cubriendo el hermano.")
+        
+        formato_aportes = {m: "S/. {:,.2f}" for m in core.MESES}
+        formato_aportes["Total Anual"] = "S/. {:,.2f}"
+        
+        st.dataframe(df_aportes.style.format(formato_aportes, na_rep="-"), use_container_width=True, hide_index=True)
+        st.download_button(
+            "📄 Descargar Matriz de Aportes en PDF",
+            data=lambda: generar_pdf_matriz_diezmos(df_aportes, anio_sel, "aportes"),
+            file_name=f"Matriz_Aportes_{anio_sel}.pdf",
+            mime="application/pdf"
+        )
+
+    st.markdown("---")
+    st.download_button(
+        label="📊 Descargar Ambas Matrices en Excel (.xlsx)",
+        data=lambda: generar_excel_matrices(df_cump, df_aportes, anio_sel),
+        file_name=f"Matrices_Diezmos_{anio_sel}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
+
+# ==============================================================================
+# 5. MODIFICAR O ELIMINAR CON FILTROS
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### ⚙️ Gestión de Registros de Diezmo (Modificar o Eliminar)")
     
-    # Carga optimizada sin la pesada conversión to_datetime
     df_all = cargar_diezmos_busqueda()
 
     if df_all.empty:
