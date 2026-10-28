@@ -2,8 +2,8 @@ name: Mantener Sistema Punbax Activo
 
 on:
   schedule:
-    # Se ejecuta automáticamente cada 2 horas
-    - cron: '0 */2 * * *'
+    # Se ejecuta automáticamente cada 15 minutos para evitar la hibernación
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -12,6 +12,5 @@ jobs:
     steps:
       - name: Despertar contenedor Streamlit con sesión
         run: |
-          curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-          "https://sistema-nazareth-bfx5nlezds7ubxs4jcblkx.streamlit.app/" > /dev/null
-          echo "Petición enviada con éxito."
+          curl -s -L --max-time 60 --retry 3 --retry-delay 5 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" "https://sistema-nazareth-bfx5nlezds7ubxs4jcblkx.streamlit.app/" > /dev/null
+          echo "Petición enviada con éxito y con tolerancia a demoras."
