@@ -476,4 +476,192 @@ elif opcion == "⚙️ Modificar o Eliminar":
             with col_f4:
                 filtro_estado = st.selectbox("Estado del Pago:", ["Todos", "Pendiente", "Pagado"], index=0)
             with col_f5:
-                filtro_fondo = st.selectbox("
+                filtro_fondo = st.selectbox("Fondo de Origen:", ["Todos"] + FONDOS, index=0)
+            with col_f6:
+                filtro_categoria = st.selectbox("Categoría:", ["Todos"] + list(dict_rubros_egreso.keys()), index=0)
+
+        df_filtrado = df_todos_gest
+
+        if filtro_texto.strip():
+            txt = filtro_texto.strip().lower()
+            df_filtrado = df_filtrado[
+                df_filtrado["concepto"].astype(str).str.lower().str.contains(txt) |
+                df_filtrado["codigo"].astype(str).str.lower().str.contains(txt) |
+                df_filtrado["responsable"].astype(str).str.lower().str.contains(txt) |
+                df_filtrado["serie_comprobante"].astype(str).str.lower().str.contains(txt) |
+                df_filtrado["numero_comprobante"].astype(str).str.lower().str.contains(txt)
+            ]
+
+        if filtro_anio != "Todos":
+            df_filtrado = df_filtrado[df_filtrado["anio_venc"] == filtro_anio]
+
+        if filtro_mes != "Todos":
+            mes_n_filtro = core.MESES.index(filtro_mes) + 1
+            df_filtrado = df_filtrado[df_filtrado["mes_venc"] == mes_n_filtro]
+
+        if filtro_estado != "Todos":
+            df_filtrado = df_filtrado[df_filtrado["estado"] == filtro_estado]
+
+        if filtro_fondo != "Todos":
+            df_filtrado = df_filtrado[df_filtrado["fondo"] == filtro_fondo]
+
+        if filtro_categoria != "Todos":
+            df_filtrado = df_filtrado[df_filtrado["categoria"] == filtro_categoria]
+
+        st.caption(f"Coincidencias encontradas: **{len(df_filtrado)}** de {len(df_todos_gest)} registros totales.")
+
+        if df_filtrado.empty:
+            st.warning("⚠️ No se encontraron compromisos que coincidan con los filtros seleccionados.")
+        else:
+            def comp_label(r):
+                s = str(r.get("serie_comprobante") or "")
+                n = str(r.get("numero_comprobante") or "")
+                s = "" if s.lower() == "nan" else s
+                n = "" if n.lower() == "nan" else n
+                folio = f" | Comp: {s}-{n}".strip("-") if (s or n) else ""
+                f_v = str(r.get("fecha_vencimiento") or "Sin fecha")
+                return f"{r['codigo']} — {r['concepto']} (S/. {r['monto']:,.2f} | Vence: {f_v} | {r['estado']}{folio})"
+
+            opciones_mod = {comp_label(r): r["id"] for _, r in df_filtrado.iterrows()}
+
+            st.markdown("---")
+            sel_mod = st.selectbox("📌 Selecciona el registro que deseas gestionar:", list(opciones_mod.keys()))
+            id_mod = opciones_mod[sel_mod]
+            reg_mod = df_filtrado[df_filtrado["id"] == id_mod].iloc[0]
+
+            concepto_raiz = limpiar_concepto_raiz(reg_mod["concepto"])
+
+            accion = st.radio("Acción a realizar sobre el registro:", ["✏️ Editar Datos", "🗑️ Eliminar Compromiso"], horizontal=True)
+
+            if accion == "✏️ Editar Datos":
+                f_v_val = parsear_fecha_segura(reg_mod.get("fecha_vencimiento"))
+                
+                cat_actual = str(reg_mod["categoria"])
+                subcat_actual = str(reg_mod.get("subcategoria")) if pd.notnull(reg_mod.get("subcategoria")) else "General"
+                
+                cat_opts_edit = list(dict_rubros_egreso.keys())
+                idx_cat = cat_opts_edit.index(cat_actual) if cat_actual in cat_opts_edit else 0
+                idx_fon = FONDOS.index(reg_mod["fondo"]) if reg_mod["fondo"] in FONDOS else 0
+
+                s_init = str(reg_mod["serie_comprobante"]) if pd.notnull(reg_mod["serie_comprobante"]) and str(reg_mod["serie_comprobante"]).lower() != "nan" else ""
+                n_init = str(reg_mod["numero_comprobante"]) if pd.notnull(reg_mod["numero_comprobante"]) and str(reg_mod["numero_comprobante"]).lower() != "nan" else ""
+                op_init = str(reg_mod["num_operacion"]) if pd.notnull(reg_mod["num_operacion"]) and str(reg_mod["num_operacion"]).lower() != "nan" else ""
+                resp_init = str(reg_mod["responsable"]) if pd.notnull(reg_mod["responsable"]) and str(reg_mod["responsable"]).lower() != "nan" else "Tesorero General"
+                obs_init = str(reg_mod["observaciones"]) if pd.notnull(reg_mod["observaciones"]) and str(reg_mod["observaciones"]).lower() != "nan" else ""
+
+                # Eliminamos st.form para que los campos actualicen su lista al cambiar Categoría
+                st.markdown("<div style='background: rgba(255, 255, 255, 0.9); padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);'>", unsafe_allow_html=True)
+                st.info(f"Modificando compromiso: **{reg_mod['codigo']}** — {reg_mod['concepto']}")
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    e_concepto = st.text_input("Concepto:", value=str(reg_mod["concepto"]))
+                    e_categoria = st.selectbox("Categoría:", cat_opts_edit, index=idx_cat)
+                    
+                    subcat_opts_edit = dict_rubros_egreso.get(e_categoria, ["General"])
+                    idx_subcat = subcat_opts_edit.index(subcat_actual) if subcat_actual in subcat_opts_edit else 0
+                    e_subcat = st.selectbox("Rubro / Subcategoría:", subcat_opts_edit, index=idx_subcat)
+                    
+                    e_monto = st.number_input("Monto (S/.):", min_value=1.0, value=float(reg_mod["monto"]), step=5.0, format="%.2f")
+                    e_fondo = st.selectbox("Fondo:", FONDOS, index=idx_fon)
+                    e_venc = st.date_input("Fecha de Vencimiento:", value=f_v_val)
+                    e_estado = st.selectbox("Estado:", ["Pendiente", "Pagado"], index=0 if reg_mod["estado"] != "Pagado" else 1)
+
+                with c2:
+                    st.markdown("##### 🧾 Serie y Número del Comprobante")
+                    e_serie = st.text_input("Serie:", value=s_init)
+                    e_numero = st.text_input("Número Correlativo:", value=n_init)
+                    e_op = st.text_input("N° Operación Bancaria:", value=op_init)
+                    e_resp = st.text_input("Responsable:", value=resp_init)
+                    e_obs = st.text_area("Observaciones:", value=obs_init)
+
+                st.markdown("---")
+                if st.button("💾 Guardar Cambios y Actualizar Tesorería", type="primary", use_container_width=True):
+                    f_pago_obj = parsear_fecha_segura(reg_mod.get("fecha_pago"), date.today())
+
+                    folio_anterior, _, _, _ = obtener_folio_comprobante(s_init, n_init, reg_mod["codigo"], f_pago_obj)
+                    folio_nuevo, s_new, n_new, t_new = obtener_folio_comprobante(e_serie, e_numero, reg_mod["codigo"], f_pago_obj)
+
+                    core.query_db("""
+                        UPDATE public.pagos_programados SET
+                            concepto = ?, categoria = ?, subcategoria = ?, monto = ?, fondo = ?,
+                            fecha_vencimiento = ?, estado = ?, serie_comprobante = ?,
+                            numero_comprobante = ?, num_operacion = ?, responsable = ?, observaciones = ?
+                        WHERE id = ?
+                    """, (e_concepto.strip(), e_categoria, e_subcat, e_monto, e_fondo, str(e_venc), e_estado, s_new, n_new, e_op.strip(), e_resp.strip(), e_obs.strip(), id_mod))
+
+                    if reg_mod["estado"] == "Pagado" or e_estado == "Pagado":
+                        detalle_act = f"Op: {e_op.strip()}" if e_op.strip() else f"Comp: {folio_nuevo}"
+                        f_real = reg_mod["fecha_pago"] if pd.notnull(reg_mod["fecha_pago"]) and str(reg_mod["fecha_pago"]).lower() != "nan" else str(e_venc)
+                        med_real = reg_mod["medio_pago"] if pd.notnull(reg_mod["medio_pago"]) and str(reg_mod["medio_pago"]).lower() != "nan" else "Efectivo"
+                        _sincronizar_asiento_tesoreria(
+                            f_real, e_categoria, e_subcat, e_concepto.strip(), e_fondo,
+                            e_monto, med_real, folio_nuevo, detalle_act,
+                            e_resp.strip(), es_update=True, comprobante_anterior=folio_anterior
+                        )
+
+                    core.registrar_log("Pagos Programados", "Edición", f"Actualizado {reg_mod['codigo']} | Comprobante: {folio_nuevo}")
+                    limpiar_caches_pagos()
+                    st.toast(f"✅ Cambios guardados y Tesorería sincronizada ({folio_nuevo}).")
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            elif accion == "🗑️ Eliminar Compromiso":
+                st.markdown("#### 🗑️ Opciones de Eliminación")
+                alcance_elim = st.radio(
+                    "Selecciona el alcance de la eliminación:",
+                    [
+                        "📌 Eliminar sólo esta cuota / movimiento puntual",
+                        f"📦 Eliminar la serie / evento general completo ('{concepto_raiz}')"
+                    ]
+                )
+
+                if alcance_elim.startswith("📌"):
+                    s_del = str(reg_mod.get("serie_comprobante") or "")
+                    n_del = str(reg_mod.get("numero_comprobante") or "")
+                    s_del = "" if s_del.lower() == "nan" else s_del
+                    n_del = "" if n_del.lower() == "nan" else n_del
+                    
+                    f_pago_del = parsear_fecha_segura(reg_mod.get("fecha_pago"), date.today())
+                    folio_del, _, _, _ = obtener_folio_comprobante(s_del, n_del, reg_mod["codigo"], f_pago_del)
+
+                    st.warning(f"⚠️ Se eliminará **únicamente** la cuota **{reg_mod['codigo']}** ({reg_mod['concepto']}).")
+                    if st.button("Confirmar Eliminación de Esta Cuota", type="primary"):
+                        core.query_db("DELETE FROM public.pagos_programados WHERE id=?", (id_mod,))
+                        core.query_db("DELETE FROM public.movimientos WHERE comprobante=? OR comprobante=?", (folio_del, reg_mod["codigo"]))
+                        core.registrar_log("Pagos Programados", "Eliminación Puntual", f"Eliminada cuota {reg_mod['codigo']}")
+                        limpiar_caches_pagos()
+                        st.toast(f"🗑️ Cuota {reg_mod['codigo']} eliminada correctamente.")
+                        st.rerun()
+
+                else:
+                    df_serie = core.read_db(
+                        "SELECT * FROM public.pagos_programados WHERE concepto LIKE ? OR concepto = ?",
+                        (f"{concepto_raiz}%", concepto_raiz)
+                    )
+                    cant_serie = len(df_serie)
+                    st.error(f"🚨 **¡ATENCIÓN!** Se eliminarán **todas las {cant_serie} cuotas** vinculadas a la serie **'{concepto_raiz}'**.")
+                    st.write(f"Cuotas incluidas: {', '.join(df_serie['codigo'].tolist())}")
+
+                    if st.button(f"Confirmar Eliminación de la Serie Completa ({cant_serie} cuotas)", type="primary"):
+                        for _, r_s in df_serie.iterrows():
+                            s_s = str(r_s.get("serie_comprobante") or "")
+                            n_s = str(r_s.get("numero_comprobante") or "")
+                            s_s = "" if s_s.lower() == "nan" else s_s
+                            n_s = "" if n_s.lower() == "nan" else n_s
+                            f_pago_s = parsear_fecha_segura(r_s.get("fecha_pago"), date.today())
+                            f_folio_s, _, _, _ = obtener_folio_comprobante(s_s, n_s, r_s["codigo"], f_pago_s)
+                            
+                            core.query_db("DELETE FROM public.movimientos WHERE comprobante=? OR comprobante=?", (f_folio_s, r_s["codigo"]))
+
+                        core.query_db(
+                            "DELETE FROM public.pagos_programados WHERE concepto LIKE ? OR concepto = ?",
+                            (f"{concepto_raiz}%", concepto_raiz)
+                        )
+
+                        core.registrar_log("Pagos Programados", "Eliminación Serie General", f"Eliminada serie completa '{concepto_raiz}' ({cant_serie} registros)")
+                        limpiar_caches_pagos()
+                        st.toast(f"🗑️ Serie '{concepto_raiz}' eliminada.")
+                        st.rerun()
+
+core.mostrar_pie_pagina()
