@@ -49,7 +49,7 @@ fondos, resps, df_rubros_cat = cargar_catalogos_tesoreria()
 def cargar_movimientos_tesoreria():
     """Descarga todo el libro mayor una vez, calculando Año y Mes desde Postgres"""
     return core.read_db("""
-        SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable,
+        SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto,
                EXTRACT(YEAR FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) AS anio,
                EXTRACT(MONTH FROM CAST(COALESCE(NULLIF(fecha, ''), '1970-01-01') AS DATE)) AS mes_num
         FROM public.movimientos 
@@ -636,7 +636,7 @@ elif opcion == "Evolución y Gráficos":
             )
 
 # ==============================================================================
-# 3. REGISTRAR MOVIMIENTO MANUAL
+# 3. REGISTRAR MOVIMIENTO MANUAL CON FOTO
 # ==============================================================================
 elif opcion == "Registrar Movimiento":
     t_mov = st.radio("Tipo:", ["Egreso (Gasto)", "Ingreso"], horizontal=True)
@@ -665,22 +665,37 @@ elif opcion == "Registrar Movimiento":
             comp = st.text_input("Comprobante / N° Recibo / Voucher:", placeholder="Ej. B001-00124 o OP-49210")
             resp = st.selectbox("Responsable:", resps)
             det = st.text_area("Detalle / Concepto:")
+            
+        st.markdown("---")
+        st.markdown("📸 **Evidencia del Comprobante (Opcional)**")
+        st.caption("Si abres esta página en tu celular, el botón de abajo te permitirá usar tu cámara para tomar la foto al instante.")
+        foto_up = st.file_uploader("Sube o toma una foto del recibo/voucher", type=["png", "jpg", "jpeg"])
 
         if st.form_submit_button("💾 Guardar Transacción", type="primary"):
+            
+            # 1. Proceso de subida de imagen si el usuario la agregó
+            url_foto = ""
+            if foto_up is not None:
+                with st.spinner("Comprimiendo y guardando comprobante en la nube..."):
+                    nombre_base = f"Recibo_Tes_{comp.strip().replace(' ', '_')}" if comp.strip() else "Recibo_Tes"
+                    url_foto = core.comprimir_y_subir_foto(foto_up, nombre_base)
+
+            # 2. Guardar en Base de datos
             core.query_db("""
                 INSERT INTO public.movimientos 
                 (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'Cobrado')
-            """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp.strip(), det.strip(), resp))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Cobrado')
+            """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp.strip(), det.strip(), resp, url_foto))
+            
             core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp.strip()})")
             
             limpiar_caches_tesoreria()
             
-            st.toast("✅ Movimiento guardado en Tesorería.")
+            st.toast("✅ Movimiento guardado exitosamente en Tesorería.")
             st.rerun()
 
 # ==============================================================================
-# 4. MODIFICAR O ELIMINAR
+# 4. MODIFICAR O ELIMINAR CON FOTO
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### ⚙️ Gestión de Asientos de Tesorería (Modificar o Eliminar)")
@@ -759,16 +774,34 @@ elif opcion == "⚙️ Modificar o Eliminar":
                         e_resp = st.selectbox("Responsable:", resps, index=idx_resp)
                         e_det = st.text_area("Detalle / Observación:", value=str(reg_mov.get("detalle", "") or ""))
 
+                    st.markdown("---")
+                    
+                    # Ver foto actual
+                    url_foto_actual = str(reg_mov.get("archivo_foto", ""))
+                    if url_foto_actual and url_foto_actual.startswith("http"):
+                        st.markdown(f"🖼️ **Comprobante Adjunto:** [🔗 Hacer clic aquí para ver la foto original en tamaño completo]({url_foto_actual})")
+                    else:
+                        st.caption("No hay ninguna foto guardada para esta transacción.")
+                        
+                    e_foto = st.file_uploader("Actualizar foto (Opcional - Si subes una nueva foto, reemplazará a la actual)", type=["png", "jpg", "jpeg"])
+
                     btn_guardar_mov = st.form_submit_button("💾 Guardar Cambios en Tesorería", type="primary")
 
                 if btn_guardar_mov:
+                    # 1. Conservar foto vieja, a menos que suba una nueva
+                    url_final = url_foto_actual
+                    if e_foto is not None:
+                        with st.spinner("Subiendo nuevo comprobante a la nube..."):
+                            url_final = core.comprimir_y_subir_foto(e_foto, f"Recibo_Edit_{id_mov_sel}")
+
+                    # 2. Actualizar registro en BD
                     core.query_db("""
                         UPDATE public.movimientos SET
                             fecha = ?, tipo = ?, categoria = ?, subcategoria = ?,
                             fondo = ?, monto = ?, medio = ?, comprobante = ?,
-                            responsable = ?, detalle = ?
+                            responsable = ?, detalle = ?, archivo_foto = ?
                         WHERE id = ?
-                    """, (str(e_fecha), e_tipo, e_cat.strip(), e_subcat.strip(), e_fondo, round(float(e_monto), 2), e_medio, e_comp.strip(), e_resp, e_det.strip(), id_mov_sel))
+                    """, (str(e_fecha), e_tipo, e_cat.strip(), e_subcat.strip(), e_fondo, round(float(e_monto), 2), e_medio, e_comp.strip(), e_resp, e_det.strip(), url_final, id_mov_sel))
 
                     core.registrar_log("Tesorería", "Edición", f"Actualizado asiento ID #{id_mov_sel} por S/. {e_monto:,.2f}")
                     
