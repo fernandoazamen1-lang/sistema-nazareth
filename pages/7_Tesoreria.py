@@ -88,6 +88,7 @@ MAP_COLUMNAS_INFO = {
     "Responsable": ("responsable", 80, 'LEFT'),
     "Detalle": ("detalle", 140, 'LEFT'),
     "Monto (S/.)": ("monto", 75, 'RIGHT'),
+    "Foto Adjunta": ("archivo_foto", 55, 'CENTER')
 }
 
 def generar_pdf_libro_caja_dinamico(df_reporte, cols_visibles, tot_i, tot_e, saldo_n, filtros_txt=""):
@@ -155,6 +156,8 @@ def generar_pdf_libro_caja_dinamico(df_reporte, cols_visibles, tot_i, tot_e, sal
                 fila_item.append(f"S/. {float(val):,.2f}")
             elif col_key == "fecha":
                 fila_item.append(str(val)[:10])
+            elif col_key == "archivo_foto":
+                fila_item.append("Adjunto" if str(val).startswith("http") else "-")
             else:
                 fila_item.append(str(val)[:30])
         filas.append(fila_item)
@@ -397,7 +400,7 @@ if opcion == "Libro Detallado":
             cols_seleccionadas = st.multiselect(
                 "Marca o desmarca las columnas que deseas visualizar y exportar:",
                 options=todas_las_columnas,
-                default=["Fecha", "Tipo", "Medio", "Fondo", "Categoría", "Rubro", "Comprobante", "Monto (S/.)"]
+                default=["Fecha", "Tipo", "Categoría", "Comprobante", "Detalle", "Monto (S/.)", "Foto Adjunta"]
             )
 
         if not cols_seleccionadas:
@@ -479,6 +482,20 @@ if opcion == "Libro Detallado":
         renombrar_dict = {MAP_COLUMNAS_INFO[c][0]: c for c in cols_seleccionadas}
         df_mostrar = df_fil[cols_db_mostrar].rename(columns=renombrar_dict)
 
+        # -------------------------------------------------------------------
+        # AJUSTE PARA FOTOS: Convertir enlaces en botones clickeables
+        # -------------------------------------------------------------------
+        column_config = {}
+        if "Foto Adjunta" in cols_seleccionadas:
+            # Reemplazar urls inválidas por None para que la tabla las deje en blanco
+            df_mostrar["Foto Adjunta"] = df_mostrar["Foto Adjunta"].apply(lambda x: str(x) if str(x).startswith("http") else None)
+            
+            # Convertir la columna en tipo Enlace con un botón bonito
+            column_config["Foto Adjunta"] = st.column_config.LinkColumn(
+                "Foto Adjunta",
+                display_text="🖼️ Abrir Foto"
+            )
+
         format_dict = {}
         if "Monto (S/.)" in cols_seleccionadas:
             format_dict["Monto (S/.)"] = "S/. {:,.2f}"
@@ -486,7 +503,8 @@ if opcion == "Libro Detallado":
         st.dataframe(
             df_mostrar.style.format(format_dict),
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            column_config=column_config
         )
 
 # ==============================================================================
