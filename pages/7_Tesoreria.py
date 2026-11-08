@@ -831,12 +831,24 @@ elif opcion == "⚙️ Modificar o Eliminar":
             elif accion_m == "🗑️ Eliminar Transacción":
                 st.warning(f"⚠️ ¿Confirma eliminar definitivamente la transacción **ID #{reg_mov['id']}** por **S/. {float(reg_mov['monto']):,.2f}** ({reg_mov['detalle']})?")
                 if st.button("Eliminar Definitivamente", type="primary"):
+                    
+                    # 1. BORRAR FOTO FÍSICA DE LA NUBE (Si existe)
+                    url_foto = str(reg_mov.get("archivo_foto", ""))
+                    if url_foto and url_foto.startswith("http"):
+                        try:
+                            # Cortamos la URL para quedarnos solo con el nombre del archivo
+                            ruta_archivo = url_foto.split("archivos_iglesia/")[-1]
+                            core.supabase.storage.from_("archivos_iglesia").remove([ruta_archivo])
+                        except Exception as e:
+                            st.warning(f"El registro se borrará, pero hubo un error al borrar la foto en la nube: {e}")
+
+                    # 2. BORRAR REGISTRO DE LA BASE DE DATOS
                     core.query_db("DELETE FROM public.movimientos WHERE id=?", (id_mov_sel,))
                     core.registrar_log("Tesorería", "Eliminación", f"Eliminado asiento ID #{id_mov_sel} de S/. {float(reg_mov['monto']):,.2f}")
                     
                     limpiar_caches_tesoreria()
                     
-                    st.toast("🗑️ Transacción eliminada de Tesorería.")
+                    st.toast("🗑️ Transacción y foto adjunta eliminadas de Tesorería.")
                     st.rerun()
 
 core.mostrar_pie_pagina()
