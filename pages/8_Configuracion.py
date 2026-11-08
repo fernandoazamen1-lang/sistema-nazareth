@@ -96,14 +96,16 @@ es_administrador = (rol_actual == "Administrador")
 
 if es_administrador:
     secciones_configuracion = [
-        "🏛️ Parámetros y Catálogos",
+        "🏛️ Parámetros Generales",
+        "💼 Fondos y Rubros",
         "🔒 Cierres de Mes y Auditoría",
         "🛡️ Respaldo y Base de Datos",
         "👥 Usuarios y Permisos"
     ]
 else:
     secciones_configuracion = [
-        "🏛️ Parámetros y Catálogos",
+        "🏛️ Parámetros Generales",
+        "💼 Fondos y Rubros",
         "🔒 Cierres de Mes y Auditoría"
     ]
 
@@ -116,9 +118,9 @@ seccion_cfg = st.radio(
 st.markdown("---")
 
 # ==============================================================================
-# 1. PARÁMETROS Y CATÁLOGOS
+# 1. PARÁMETROS GENERALES (Identidad y Responsables)
 # ==============================================================================
-if seccion_cfg == "🏛️ Parámetros y Catálogos":
+if seccion_cfg == "🏛️ Parámetros Generales":
     col_izq, col_der = st.columns(2)
 
     with col_izq:
@@ -154,7 +156,9 @@ if seccion_cfg == "🏛️ Parámetros y Catálogos":
                 st.toast("✅ Datos institucionales guardados correctamente.")
                 st.rerun()
 
+    with col_der:
         st.markdown("#### 👤 Catálogo de Responsables / Firmantes")
+        st.caption("Esta lista aparecerá en el módulo de Tesorería para elegir quién aprueba o recibe el dinero.")
         df_resp = core.read_db("SELECT id, nombre FROM public.responsables_catalogo ORDER BY nombre ASC")
         st.dataframe(
             df_resp.rename(columns={"nombre": "Autoridades / Responsables Registrados"}), 
@@ -181,122 +185,212 @@ if seccion_cfg == "🏛️ Parámetros y Catálogos":
                     st.toast("🗑️ Responsable eliminado.")
                     st.rerun()
 
-    with col_der:
-        st.markdown("#### 💼 Fondos de Tesorería y Saldos")
-        # 🚀 OPTIMIZACIÓN: SQL calcula los saldos directamente sin bucles en Python
-        df_f = core.read_db("""
-            SELECT 
-                f.nombre AS "Fondo",
-                COALESCE(SUM(CASE WHEN m.tipo = 'Ingreso' THEN m.monto ELSE 0 END), 0) - 
-                COALESCE(SUM(CASE WHEN m.tipo = 'Egreso' THEN m.monto ELSE 0 END), 0) AS "Saldo Actual (S/.)"
-            FROM public.fondos_catalogo f
-            LEFT JOIN public.movimientos m ON f.nombre = m.fondo
-            GROUP BY f.nombre
-            ORDER BY f.nombre ASC
-        """)
-        
-        st.dataframe(
-            df_f.style.format({"Saldo Actual (S/.)": "S/. {:,.2f}"}), 
-            use_container_width=True, 
-            hide_index=True
-        )
+# ==============================================================================
+# NUEVO MÓDULO: 💼 FONDOS Y RUBROS (Con edición y carga masiva)
+# ==============================================================================
+elif seccion_cfg == "💼 Fondos y Rubros":
+    st.markdown("#### 💼 Fondos de Tesorería y Saldos")
+    df_f = core.read_db("""
+        SELECT 
+            f.nombre AS "Fondo",
+            COALESCE(SUM(CASE WHEN m.tipo = 'Ingreso' THEN m.monto ELSE 0 END), 0) - 
+            COALESCE(SUM(CASE WHEN m.tipo = 'Egreso' THEN m.monto ELSE 0 END), 0) AS "Saldo Actual (S/.)"
+        FROM public.fondos_catalogo f
+        LEFT JOIN public.movimientos m ON f.nombre = m.fondo
+        GROUP BY f.nombre
+        ORDER BY f.nombre ASC
+    """)
+    
+    st.dataframe(
+        df_f.style.format({"Saldo Actual (S/.)": "S/. {:,.2f}"}), 
+        use_container_width=True, 
+        hide_index=True
+    )
 
-        c_f1, c_f2 = st.columns(2)
-        with c_f1:
-            with st.form("form_add_fnd_mini"):
-                n_fnd = st.text_input("Nuevo Fondo:")
-                if st.form_submit_button("➕ Añadir Fondo"):
-                    if n_fnd.strip():
-                        core.query_db("INSERT INTO public.fondos_catalogo (nombre) VALUES (?) ON CONFLICT (nombre) DO NOTHING", (n_fnd.strip(),))
-                        core.registrar_log("Configuración", "Catálogo", f"Añadido fondo: {n_fnd.strip()}")
-                        st.toast("✅ Fondo creado.")
-                        st.rerun()
-        with c_f2:
-            f_del_disp = [f for f in df_f["Fondo"].tolist() if f != "General"]
-            if f_del_disp:
-                f_del = st.selectbox("Eliminar Fondo:", f_del_disp, key="sel_fnd_del")
-                df_cant = core.read_db("SELECT COUNT(*) as t FROM public.movimientos WHERE fondo=?", (f_del,))
-                cant_m = df_cant.iloc[0]["t"] if not df_cant.empty else 0
-                if st.button("🗑️ Eliminar Fondo"):
-                    if cant_m > 0:
-                        st.error(f"No se puede borrar: tiene {cant_m} movimientos asociados.")
-                    else:
-                        core.query_db("DELETE FROM public.fondos_catalogo WHERE nombre=?", (f_del,))
-                        core.registrar_log("Configuración", "Catálogo", f"Eliminado fondo: {f_del}")
-                        st.toast("🗑️ Fondo eliminado.")
-                        st.rerun()
-
-        st.markdown("---")
-        st.markdown("#### 📑 Gestión Jerárquica: Categorías y Rubros")
-        st.caption("Primero crea la Categoría principal y luego asígnale los Rubros específicos.")
-        
-        df_rub_full = core.read_db("SELECT id, tipo, categoria, subcategoria FROM public.rubros_catalogo ORDER BY tipo ASC, categoria ASC, subcategoria ASC")
-        
-        tab_cat, tab_rub = st.tabs(["📂 1. Crear y Gestionar Categorías", "📄 2. Crear y Gestionar Rubros"])
-        
-        with tab_cat:
-            c_c1, c_c2 = st.columns(2)
-            with c_c1:
-                st.markdown("##### ➕ Nueva Categoría")
-                t_cat = st.selectbox("Tipo de Movimiento:", ["Egreso", "Ingreso"], key="tipo_cat")
-                n_cat = st.text_input("Nombre de la Categoría:", placeholder="Ej. Servicios Básicos")
-                if st.button("Crear Categoría", type="primary"):
-                    if n_cat.strip():
-                        # Creamos la categoría con un rubro por defecto 'General' para que exista en BD
-                        core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, 'General')", (t_cat, n_cat.strip()))
-                        core.registrar_log("Configuración", "Catálogo", f"Creada categoría: {t_cat} - {n_cat.strip()}")
-                        st.cache_data.clear()
-                        st.rerun()
-            with c_c2:
-                st.markdown("##### 🗑️ Eliminar Categoría")
-                if not df_rub_full.empty:
-                    cats_unicas = df_rub_full[["tipo", "categoria"]].drop_duplicates()
-                    opc_cats = {f"[{r['tipo']}] {r['categoria']}": (r['tipo'], r['categoria']) for _, r in cats_unicas.iterrows()}
-                    cat_del_k = st.selectbox("Seleccione categoría a eliminar:", list(opc_cats.keys()))
-                    st.caption("⚠️ Al eliminar la categoría, se borrarán todos los rubros que contiene.")
-                    if st.button("🗑️ Eliminar Categoría", type="secondary"):
-                        t_del, c_del = opc_cats[cat_del_k]
-                        core.query_db("DELETE FROM public.rubros_catalogo WHERE tipo=? AND categoria=?", (t_del, c_del))
-                        core.registrar_log("Configuración", "Catálogo", f"Eliminada categoría: {cat_del_k}")
-                        st.cache_data.clear()
-                        st.rerun()
-
-        with tab_rub:
-            c_r1, c_r2 = st.columns(2)
-            with c_r1:
-                st.markdown("##### ➕ Nuevo Rubro / Subcategoría")
-                t_rub = st.selectbox("Filtro por Tipo:", ["Egreso", "Ingreso"], key="tipo_rub")
-                cats_disp = df_rub_full[df_rub_full["tipo"] == t_rub]["categoria"].unique().tolist() if not df_rub_full.empty else []
-                
-                if cats_disp:
-                    c_rub = st.selectbox("Pertenece a la Categoría:", cats_disp)
-                    n_rub = st.text_input("Nombre del Rubro:", placeholder="Ej. Recibo de Luz, Agua, etc.")
-                    if st.button("Crear Rubro", type="primary"):
-                        if n_rub.strip():
-                            core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, ?)", (t_rub, c_rub, n_rub.strip()))
-                            core.registrar_log("Configuración", "Catálogo", f"Añadido rubro: {t_rub} - {c_rub} / {n_rub.strip()}")
-                            st.cache_data.clear()
-                            st.rerun()
+    c_f1, c_f2 = st.columns(2)
+    with c_f1:
+        with st.form("form_add_fnd_mini"):
+            n_fnd = st.text_input("Nuevo Fondo (Ej. Construcción, Misiones):")
+            if st.form_submit_button("➕ Añadir Fondo"):
+                if n_fnd.strip():
+                    core.query_db("INSERT INTO public.fondos_catalogo (nombre) VALUES (?) ON CONFLICT (nombre) DO NOTHING", (n_fnd.strip(),))
+                    core.registrar_log("Configuración", "Catálogo", f"Añadido fondo: {n_fnd.strip()}")
+                    st.toast("✅ Fondo creado.")
+                    st.rerun()
+    with c_f2:
+        f_del_disp = [f for f in df_f["Fondo"].tolist() if f != "General"]
+        if f_del_disp:
+            f_del = st.selectbox("Eliminar Fondo:", f_del_disp, key="sel_fnd_del")
+            df_cant = core.read_db("SELECT COUNT(*) as t FROM public.movimientos WHERE fondo=?", (f_del,))
+            cant_m = df_cant.iloc[0]["t"] if not df_cant.empty else 0
+            if st.button("🗑️ Eliminar Fondo"):
+                if cant_m > 0:
+                    st.error(f"No se puede borrar: tiene {cant_m} movimientos asociados.")
                 else:
-                    st.warning("⚠️ Primero crea una Categoría de este tipo en la pestaña anterior.")
+                    core.query_db("DELETE FROM public.fondos_catalogo WHERE nombre=?", (f_del,))
+                    core.registrar_log("Configuración", "Catálogo", f"Eliminado fondo: {f_del}")
+                    st.toast("🗑️ Fondo eliminado.")
+                    st.rerun()
 
-            with c_r2:
-                st.markdown("##### 🗑️ Eliminar Rubro Específico")
-                if not df_rub_full.empty:
-                    opciones_rub_dict = {f"[{r['tipo']}] {r['categoria']} -> {r['subcategoria']}": r["id"] for _, r in df_rub_full.iterrows()}
-                    rub_sel = st.selectbox("Seleccione rubro a eliminar:", list(opciones_rub_dict.keys()))
-                    if st.button("🗑️ Eliminar Rubro", type="secondary"):
-                        id_r_del = opciones_rub_dict[rub_sel]
-                        core.query_db("DELETE FROM public.rubros_catalogo WHERE id=?", (id_r_del,))
-                        core.registrar_log("Configuración", "Catálogo", f"Eliminado rubro: {rub_sel}")
+    st.markdown("---")
+    st.markdown("#### 📑 Gestión Jerárquica: Categorías y Rubros")
+    df_rub_full = core.read_db("SELECT id, tipo, categoria, subcategoria FROM public.rubros_catalogo ORDER BY tipo ASC, categoria ASC, subcategoria ASC")
+    
+    tab_cat, tab_rub, tab_edit, tab_masiva = st.tabs([
+        "📂 1. Crear Categorías", 
+        "📄 2. Crear/Eliminar Rubros", 
+        "✏️ 3. Editar Rubro", 
+        "📥 4. Carga Masiva (Excel)"
+    ])
+    
+    with tab_cat:
+        c_c1, c_c2 = st.columns(2)
+        with c_c1:
+            st.markdown("##### ➕ Nueva Categoría")
+            t_cat = st.selectbox("Tipo de Movimiento:", ["Egreso", "Ingreso"], key="tipo_cat")
+            n_cat = st.text_input("Nombre de la Categoría:", placeholder="Ej. Servicios Básicos")
+            if st.button("Crear Categoría", type="primary"):
+                if n_cat.strip():
+                    core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, 'General')", (t_cat, n_cat.strip()))
+                    core.registrar_log("Configuración", "Catálogo", f"Creada categoría: {t_cat} - {n_cat.strip()}")
+                    st.cache_data.clear()
+                    st.rerun()
+        with c_c2:
+            st.markdown("##### 🗑️ Eliminar Categoría")
+            if not df_rub_full.empty:
+                cats_unicas = df_rub_full[["tipo", "categoria"]].drop_duplicates()
+                opc_cats = {f"[{r['tipo']}] {r['categoria']}": (r['tipo'], r['categoria']) for _, r in cats_unicas.iterrows()}
+                cat_del_k = st.selectbox("Seleccione categoría a eliminar:", list(opc_cats.keys()))
+                st.caption("⚠️ Al eliminar la categoría, se borrarán todos los rubros que contiene.")
+                if st.button("🗑️ Eliminar Categoría", type="secondary"):
+                    t_del, c_del = opc_cats[cat_del_k]
+                    core.query_db("DELETE FROM public.rubros_catalogo WHERE tipo=? AND categoria=?", (t_del, c_del))
+                    core.registrar_log("Configuración", "Catálogo", f"Eliminada categoría: {cat_del_k}")
+                    st.cache_data.clear()
+                    st.rerun()
+
+    with tab_rub:
+        c_r1, c_r2 = st.columns(2)
+        with c_r1:
+            st.markdown("##### ➕ Nuevo Rubro / Subcategoría")
+            t_rub = st.selectbox("Filtro por Tipo:", ["Egreso", "Ingreso"], key="tipo_rub")
+            cats_disp = df_rub_full[df_rub_full["tipo"] == t_rub]["categoria"].unique().tolist() if not df_rub_full.empty else []
+            
+            if cats_disp:
+                c_rub = st.selectbox("Pertenece a la Categoría:", cats_disp)
+                n_rub = st.text_input("Nombre del Rubro:", placeholder="Ej. Recibo de Luz, Agua, etc.")
+                if st.button("Crear Rubro", type="primary"):
+                    if n_rub.strip():
+                        core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, ?)", (t_rub, c_rub, n_rub.strip()))
+                        core.registrar_log("Configuración", "Catálogo", f"Añadido rubro: {t_rub} - {c_rub} / {n_rub.strip()}")
                         st.cache_data.clear()
                         st.rerun()
+            else:
+                st.warning("⚠️ Primero crea una Categoría de este tipo en la pestaña anterior.")
+
+        with c_r2:
+            st.markdown("##### 🗑️ Eliminar Rubro Específico")
+            if not df_rub_full.empty:
+                opciones_rub_dict = {f"[{r['tipo']}] {r['categoria']} -> {r['subcategoria']}": r["id"] for _, r in df_rub_full.iterrows()}
+                rub_sel = st.selectbox("Seleccione rubro a eliminar:", list(opciones_rub_dict.keys()))
+                if st.button("🗑️ Eliminar Rubro", type="secondary"):
+                    id_r_del = opciones_rub_dict[rub_sel]
+                    core.query_db("DELETE FROM public.rubros_catalogo WHERE id=?", (id_r_del,))
+                    core.registrar_log("Configuración", "Catálogo", f"Eliminado rubro: {rub_sel}")
+                    st.cache_data.clear()
+                    st.rerun()
+
+    with tab_edit:
+        st.markdown("##### ✏️ Editar Rubro Existente")
+        if not df_rub_full.empty:
+            opciones_edit_dict = {f"[{r['tipo']}] {r['categoria']} -> {r['subcategoria']}": r for _, r in df_rub_full.iterrows()}
+            rub_sel_edit = st.selectbox("Selecciona el rubro a editar:", list(opciones_edit_dict.keys()))
+            rub_data = opciones_edit_dict[rub_sel_edit]
+
+            with st.form("form_edit_rubro"):
+                e_tipo = st.selectbox("Tipo:", ["Ingreso", "Egreso"], index=0 if rub_data['tipo'] == 'Ingreso' else 1)
+                e_cat = st.text_input("Categoría:", value=rub_data['categoria'])
+                e_subcat = st.text_input("Rubro / Subcategoría:", value=rub_data['subcategoria'])
+                
+                if st.form_submit_button("💾 Guardar Cambios del Rubro", type="primary"):
+                    if e_cat.strip() and e_subcat.strip():
+                        core.query_db(
+                            "UPDATE public.rubros_catalogo SET tipo=?, categoria=?, subcategoria=? WHERE id=?", 
+                            (e_tipo, e_cat.strip(), e_subcat.strip(), rub_data['id'])
+                        )
+                        core.registrar_log("Configuración", "Edición Catálogo", f"Rubro modificado a: [{e_tipo}] {e_cat} -> {e_subcat}")
+                        st.cache_data.clear()
+                        st.toast("✅ Rubro actualizado correctamente.")
+                        st.rerun()
+
+    with tab_masiva:
+        st.markdown("##### 📥 Carga Masiva de Rubros por Excel")
+        st.caption("Ahorra tiempo subiendo todas tus categorías y rubros de golpe. Primero descarga la plantilla, llénala y luego súbela.")
         
-        st.markdown("##### 📋 Tabla Resumen del Catálogo")
-        st.dataframe(
-            df_rub_full.rename(columns={"tipo": "Tipo", "categoria": "Categoría", "subcategoria": "Rubro (Subcategoría)"}), 
-            use_container_width=True, hide_index=True
-        )
+        def generar_plantilla_rubros():
+            df_template = pd.DataFrame({
+                "Tipo": ["Ingreso", "Egreso", "Egreso", "Ingreso"],
+                "Categoría": ["Ofrendas", "Servicios Básicos", "Servicios Básicos", "Actividades"],
+                "Rubro": ["Ofrenda Misionera", "Recibo de Luz", "Recibo de Agua", "Venta de Comida"]
+            })
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as w:
+                df_template.to_excel(w, index=False)
+            return output.getvalue()
+
+        col_desc, col_up = st.columns([1, 2])
+        with col_desc:
+            st.download_button(
+                label="⬇️ Descargar Plantilla (.xlsx)",
+                data=generar_plantilla_rubros(),
+                file_name="Plantilla_Rubros.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        
+        with col_up:
+            up_excel = st.file_uploader("Sube aquí tu plantilla llena:", type=["xlsx"])
+            if up_excel:
+                if st.button("🚀 Procesar e Importar Excel", type="primary"):
+                    try:
+                        df_carga = pd.read_excel(up_excel)
+                        if all(col in df_carga.columns for col in ["Tipo", "Categoría", "Rubro"]):
+                            # Crear un set para evitar duplicados en la base de datos
+                            set_existentes = set()
+                            if not df_rub_full.empty:
+                                for _, r in df_rub_full.iterrows():
+                                    set_existentes.add((str(r['tipo']).strip().lower(), str(r['categoria']).strip().lower(), str(r['subcategoria']).strip().lower()))
+                            
+                            agregados = 0
+                            for _, row in df_carga.iterrows():
+                                t = str(row.get("Tipo", "")).strip().capitalize()
+                                c = str(row.get("Categoría", "")).strip()
+                                r = str(row.get("Rubro", "")).strip()
+                                
+                                if t in ["Ingreso", "Egreso"] and c and r:
+                                    tupla_check = (t.lower(), c.lower(), r.lower())
+                                    if tupla_check not in set_existentes:
+                                        core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, ?)", (t, c, r), commit=False)
+                                        set_existentes.add(tupla_check)
+                                        agregados += 1
+                                        
+                            st.cache_data.clear() # Limpia caché (también ejecuta el commit final pendiente)
+                            core.registrar_log("Configuración", "Carga Masiva", f"Se importaron {agregados} rubros desde Excel.")
+                            st.success(f"🎉 Carga exitosa: Se agregaron {agregados} rubros nuevos (se omitieron los duplicados o en blanco).")
+                        else:
+                            st.error("⚠️ El Excel no tiene el formato correcto. Faltan las columnas 'Tipo', 'Categoría' o 'Rubro'.")
+                    except Exception as e:
+                        st.error(f"Error procesando el Excel: {e}")
+
+    st.markdown("##### 📋 Tabla Resumen del Catálogo Completo")
+    col_filtro, _ = st.columns([2, 2])
+    with col_filtro:
+        filtro_t_rub = st.selectbox("Filtrar visualización de la tabla:", ["Todos", "Egreso", "Ingreso"], key="filtro_vis_tabla")
+    
+    df_mostrar = df_rub_full if filtro_t_rub == "Todos" else df_rub_full[df_rub_full["tipo"] == filtro_t_rub]
+    st.dataframe(
+        df_mostrar.rename(columns={"tipo": "Tipo", "categoria": "Categoría", "subcategoria": "Rubro (Subcategoría)"}), 
+        use_container_width=True, hide_index=True
+    )
 
 # ==============================================================================
 # 2. CIERRES DE MES Y AUDITORÍA (OPTIMIZADO SQL Y CACHÉ)
@@ -477,7 +571,6 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
     with col_aud:
         st.markdown("#### 🛡️ Registro de Auditoría y Trazabilidad")
         
-        # Intentamos asegurar que la columna exista para evitar errores
         try:
             core.query_db("ALTER TABLE public.auditoria ADD COLUMN IF NOT EXISTS usuario TEXT DEFAULT 'Sistema';")
         except Exception:
