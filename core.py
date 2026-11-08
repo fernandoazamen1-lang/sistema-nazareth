@@ -285,7 +285,20 @@ def read_db(query, params=()):
             return pd.DataFrame()
 
 def registrar_log(modulo, accion, descripcion):
-    query_db("INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (%s, %s, %s, %s)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), modulo, accion, descripcion))
+    # Obtener el usuario actual logueado
+    usuario_actual = st.session_state.get("usuario_actual", {}).get("usuario", "Sistema")
+    
+    # Crear la columna 'usuario' en la base de datos si no existe (se ejecuta una sola vez por sesión)
+    if not st.session_state.get("columna_usuario_creada"):
+        try:
+            query_db("ALTER TABLE public.auditoria ADD COLUMN IF NOT EXISTS usuario TEXT DEFAULT 'Sistema';")
+            st.session_state["columna_usuario_creada"] = True
+        except Exception:
+            pass
+            
+    # Insertar el log con el nombre de usuario
+    query_db("INSERT INTO public.auditoria (fecha_hora, usuario, modulo, accion, descripcion) VALUES (?, ?, ?, ?, ?)", 
+             (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), usuario_actual, modulo, accion, descripcion))
 
 # ==============================================================================
 # DISEÑO Y ESTILOS GLOBALES
