@@ -226,48 +226,77 @@ if seccion_cfg == "🏛️ Parámetros y Catálogos":
                         st.toast("🗑️ Fondo eliminado.")
                         st.rerun()
 
-        st.markdown("#### 📑 Categorías y Rubros de Ingreso / Egreso")
-        col_filtro_rub, _ = st.columns([2, 2])
-        with col_filtro_rub:
-            filtro_t_rub = st.selectbox("Ver Rubros por Tipo:", ["Todos", "Egreso", "Ingreso"])
+        st.markdown("---")
+        st.markdown("#### 📑 Gestión Jerárquica: Categorías y Rubros")
+        st.caption("Primero crea la Categoría principal y luego asígnale los Rubros específicos.")
+        
+        df_rub_full = core.read_db("SELECT id, tipo, categoria, subcategoria FROM public.rubros_catalogo ORDER BY tipo ASC, categoria ASC, subcategoria ASC")
+        
+        tab_cat, tab_rub = st.tabs(["📂 1. Crear y Gestionar Categorías", "📄 2. Crear y Gestionar Rubros"])
+        
+        with tab_cat:
+            c_c1, c_c2 = st.columns(2)
+            with c_c1:
+                st.markdown("##### ➕ Nueva Categoría")
+                t_cat = st.selectbox("Tipo de Movimiento:", ["Egreso", "Ingreso"], key="tipo_cat")
+                n_cat = st.text_input("Nombre de la Categoría:", placeholder="Ej. Servicios Básicos")
+                if st.button("Crear Categoría", type="primary"):
+                    if n_cat.strip():
+                        # Creamos la categoría con un rubro por defecto 'General' para que exista en BD
+                        core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, 'General')", (t_cat, n_cat.strip()))
+                        core.registrar_log("Configuración", "Catálogo", f"Creada categoría: {t_cat} - {n_cat.strip()}")
+                        st.cache_data.clear()
+                        st.rerun()
+            with c_c2:
+                st.markdown("##### 🗑️ Eliminar Categoría")
+                if not df_rub_full.empty:
+                    cats_unicas = df_rub_full[["tipo", "categoria"]].drop_duplicates()
+                    opc_cats = {f"[{r['tipo']}] {r['categoria']}": (r['tipo'], r['categoria']) for _, r in cats_unicas.iterrows()}
+                    cat_del_k = st.selectbox("Seleccione categoría a eliminar:", list(opc_cats.keys()))
+                    st.caption("⚠️ Al eliminar la categoría, se borrarán todos los rubros que contiene.")
+                    if st.button("🗑️ Eliminar Categoría", type="secondary"):
+                        t_del, c_del = opc_cats[cat_del_k]
+                        core.query_db("DELETE FROM public.rubros_catalogo WHERE tipo=? AND categoria=?", (t_del, c_del))
+                        core.registrar_log("Configuración", "Catálogo", f"Eliminada categoría: {cat_del_k}")
+                        st.cache_data.clear()
+                        st.rerun()
 
-        sql_rub = "SELECT id, tipo, categoria, subcategoria FROM public.rubros_catalogo"
-        if filtro_t_rub != "Todos":
-            sql_rub += f" WHERE tipo = '{filtro_t_rub}'"
-        sql_rub += " ORDER BY tipo ASC, categoria ASC, subcategoria ASC"
-        df_rub = core.read_db(sql_rub)
-
-        st.dataframe(
-            df_rub.rename(columns={"tipo": "Tipo", "categoria": "Categoría", "subcategoria": "Rubro"}), 
-            use_container_width=True, 
-            hide_index=True
-        )
-
-        with st.expander("➕ Añadir o Eliminar Rubro", expanded=False):
-            c_r_add, c_r_del = st.columns(2)
-            with c_r_add:
-                with st.form("form_add_rub_mini"):
-                    st.caption("Añadir nuevo rubro:")
-                    t_rub = st.selectbox("Tipo:", ["Egreso", "Ingreso"])
-                    c_rub = st.text_input("Categoría:", placeholder="Ej. Servicios")
-                    s_rub = st.text_input("Rubro / Subcategoría:", placeholder="Ej. Internet")
-                    if st.form_submit_button("➕ Añadir Rubro"):
-                        if c_rub.strip() and s_rub.strip():
-                            core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, ?)", (t_rub, c_rub.strip(), s_rub.strip()))
-                            core.registrar_log("Configuración", "Catálogo", f"Añadido rubro: {t_rub} - {c_rub.strip()} / {s_rub.strip()}")
-                            st.toast("✅ Rubro agregado.")
+        with tab_rub:
+            c_r1, c_r2 = st.columns(2)
+            with c_r1:
+                st.markdown("##### ➕ Nuevo Rubro / Subcategoría")
+                t_rub = st.selectbox("Filtro por Tipo:", ["Egreso", "Ingreso"], key="tipo_rub")
+                cats_disp = df_rub_full[df_rub_full["tipo"] == t_rub]["categoria"].unique().tolist() if not df_rub_full.empty else []
+                
+                if cats_disp:
+                    c_rub = st.selectbox("Pertenece a la Categoría:", cats_disp)
+                    n_rub = st.text_input("Nombre del Rubro:", placeholder="Ej. Recibo de Luz, Agua, etc.")
+                    if st.button("Crear Rubro", type="primary"):
+                        if n_rub.strip():
+                            core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, ?)", (t_rub, c_rub, n_rub.strip()))
+                            core.registrar_log("Configuración", "Catálogo", f"Añadido rubro: {t_rub} - {c_rub} / {n_rub.strip()}")
+                            st.cache_data.clear()
                             st.rerun()
-            with c_r_del:
-                if not df_rub.empty:
-                    st.caption("Eliminar rubro existente:")
-                    opciones_rub_dict = {f"[{r['tipo']}] {r['categoria']} -> {r['subcategoria']}": r["id"] for _, r in df_rub.iterrows()}
+                else:
+                    st.warning("⚠️ Primero crea una Categoría de este tipo en la pestaña anterior.")
+
+            with c_r2:
+                st.markdown("##### 🗑️ Eliminar Rubro Específico")
+                if not df_rub_full.empty:
+                    opciones_rub_dict = {f"[{r['tipo']}] {r['categoria']} -> {r['subcategoria']}": r["id"] for _, r in df_rub_full.iterrows()}
                     rub_sel = st.selectbox("Seleccione rubro a eliminar:", list(opciones_rub_dict.keys()))
-                    if st.button("🗑️ Eliminar Rubro Seleccionado"):
+                    if st.button("🗑️ Eliminar Rubro", type="secondary"):
                         id_r_del = opciones_rub_dict[rub_sel]
                         core.query_db("DELETE FROM public.rubros_catalogo WHERE id=?", (id_r_del,))
                         core.registrar_log("Configuración", "Catálogo", f"Eliminado rubro: {rub_sel}")
-                        st.toast("🗑️ Rubro eliminado.")
+                        st.cache_data.clear()
                         st.rerun()
+        
+        st.markdown("##### 📋 Tabla Resumen del Catálogo")
+        st.dataframe(
+            df_rub_full.rename(columns={"tipo": "Tipo", "categoria": "Categoría", "subcategoria": "Rubro (Subcategoría)"}), 
+            use_container_width=True, hide_index=True
+        )
 
 # ==============================================================================
 # 2. CIERRES DE MES Y AUDITORÍA (OPTIMIZADO SQL Y CACHÉ)
@@ -447,7 +476,15 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
 
     with col_aud:
         st.markdown("#### 🛡️ Registro de Auditoría y Trazabilidad")
-        df_aud = core.read_db("SELECT fecha_hora, modulo, accion, descripcion FROM public.auditoria ORDER BY id DESC LIMIT 300")
+        
+        # Intentamos asegurar que la columna exista para evitar errores
+        try:
+            core.query_db("ALTER TABLE public.auditoria ADD COLUMN IF NOT EXISTS usuario TEXT DEFAULT 'Sistema';")
+        except Exception:
+            pass
+            
+        df_aud = core.read_db("SELECT fecha_hora, usuario, modulo, accion, descripcion FROM public.auditoria ORDER BY id DESC LIMIT 300")
+        
         if df_aud.empty:
             st.info("Sin registros de auditoría por el momento.")
         else:
@@ -456,17 +493,21 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
                 mods = ["Todos"] + sorted(list(df_aud["modulo"].dropna().unique()))
                 f_mod = st.selectbox("Filtrar por Módulo:", mods)
             with c_au2:
-                b_aud = st.text_input("Buscar en el Detalle:")
+                b_aud = st.text_input("Buscar por Detalle o Usuario Responsable:")
 
             df_aud_f = df_aud
             if f_mod != "Todos":
                 df_aud_f = df_aud_f[df_aud_f["modulo"] == f_mod]
             if b_aud.strip():
-                df_aud_f = df_aud_f[df_aud_f["descripcion"].str.contains(b_aud.strip(), case=False, na=False)]
+                termino = b_aud.strip().lower()
+                df_aud_f = df_aud_f[
+                    df_aud_f["descripcion"].str.lower().str.contains(termino, na=False) |
+                    df_aud_f["usuario"].str.lower().str.contains(termino, na=False)
+                ]
 
             st.dataframe(
-                df_aud_f[["fecha_hora", "modulo", "accion", "descripcion"]].rename(columns={
-                    "fecha_hora": "Fecha / Hora", "modulo": "Módulo", "accion": "Acción", "descripcion": "Detalle de Operación"
+                df_aud_f[["fecha_hora", "usuario", "modulo", "accion", "descripcion"]].rename(columns={
+                    "fecha_hora": "Fecha / Hora", "usuario": "Usuario", "modulo": "Módulo", "accion": "Acción", "descripcion": "Detalle de Operación"
                 }), 
                 use_container_width=True, 
                 hide_index=True
@@ -531,8 +572,8 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
 
     with c_b2:
         st.markdown("#### ⚠️ Formateo de Cero / Reset de Fábrica")
-        st.caption("Vacía los datos de movimientos, diezmos y registros en Supabase, conservando usuarios y configuración.")
-        st.error("Esta acción eliminará de forma irreversible movimientos, diezmos, actividades y compromisos.")
+        st.caption("Vacía los datos de movimientos, auditoría, diezmos y registros en Supabase, conservando usuarios y configuración.")
+        st.error("Esta acción eliminará de forma irreversible el historial completo del sistema.")
 
         chk_fmt = st.checkbox("Comprendo el riesgo y confirmo el vaciado definitivo del sistema.")
         txt_fmt = st.text_input("Escribe 'REINICIAR' en mayúsculas para desbloquear:", placeholder="REINICIAR")
@@ -542,9 +583,11 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
                 st.error("Debes escribir exactamente la palabra 'REINICIAR'.")
             else:
                 try:
+                    # Incluimos la tabla 'auditoria' para que también se vacíe
                     tablas = [
                         "movimientos", "diezmos", "actividad_movimientos", 
-                        "actividades", "pagos_programados", "cierres_mensuales", "miembros"
+                        "actividades", "pagos_programados", "cierres_mensuales", "miembros",
+                        "auditoria" 
                     ]
                     with core.get_db() as conn:
                         with conn.cursor() as cur:
@@ -555,25 +598,22 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
                                     pass
                         conn.commit()
 
-                    # --- NUEVO: BORRAR ARCHIVOS DE LA NUBE ---
+                    # Borrar archivos de la nube
                     with st.spinner("Borrando fotos antiguas de la nube para liberar espacio..."):
                         try:
-                            # 1. Le pedimos a Supabase la lista de todos los archivos guardados
                             lista_archivos = core.supabase.storage.from_("archivos_iglesia").list()
-                            
-                            # 2. Extraemos los nombres
                             archivos_a_borrar = [archivo['name'] for archivo in lista_archivos if archivo['name'] != '.emptyFolderPlaceholder']
-                            
-                            # 3. Si hay archivos, le enviamos la lista a Supabase para que los destruya de golpe
                             if archivos_a_borrar:
                                 core.supabase.storage.from_("archivos_iglesia").remove(archivos_a_borrar)
                                 st.success(f"🧹 Se liberó espacio: {len(archivos_a_borrar)} fotos eliminadas de la nube.")
                         except Exception as e:
                             st.warning(f"Se formateó la base de datos, pero hubo un error al limpiar la nube: {e}")
-                    # -----------------------------------------
-
+                    
                     st.cache_data.clear() # Limpiar toda la caché
+                    
+                    # Al registrar este log después del truncate, será EL ÚNICO registro que quedará en la tabla auditoría
                     core.registrar_log("Configuración", "RESET", "Sistema formateado de fábrica y nube limpiada.")
+                    
                     st.success("🎉 Base de datos reiniciada de fábrica con éxito.")
                     st.rerun()
                 except Exception as e:
