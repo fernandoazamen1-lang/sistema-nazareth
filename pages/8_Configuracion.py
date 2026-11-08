@@ -293,7 +293,6 @@ elif seccion_cfg == "💼 Fondos y Rubros":
             if not df_rub_full.empty:
                 st.caption("Marca las casillas de los rubros que deseas eliminar y luego presiona el botón.")
                 
-                # Preparamos el dataframe para edición agregando columna de Checkbox
                 df_delete = df_rub_full.copy()
                 df_delete.insert(0, "Seleccionar", False)
                 
@@ -301,19 +300,18 @@ elif seccion_cfg == "💼 Fondos y Rubros":
                     df_delete,
                     column_config={
                         "Seleccionar": st.column_config.CheckboxColumn("Seleccionar", default=False),
-                        "id": None, # Ocultamos el ID para limpieza
+                        "id": None,
                         "tipo": "Tipo",
                         "categoria": "Categoría",
                         "subcategoria": "Rubro"
                     },
-                    disabled=["tipo", "categoria", "subcategoria"], # Solo se puede editar el checkbox
+                    disabled=["tipo", "categoria", "subcategoria"],
                     hide_index=True,
                     use_container_width=True,
                     height=280,
                     key="editor_eliminar_rubros"
                 )
                 
-                # Obtener IDs de las filas marcadas como True
                 rubros_a_eliminar = edited_df[edited_df["Seleccionar"] == True]["id"].tolist()
                 
                 col_btn1, col_btn2 = st.columns(2)
@@ -395,13 +393,13 @@ elif seccion_cfg == "💼 Fondos y Rubros":
                     try:
                         df_carga = pd.read_excel(up_excel)
                         if all(col in df_carga.columns for col in ["Tipo", "Categoría", "Rubro"]):
-                            # Crear un set para evitar duplicados en la base de datos
                             set_existentes = set()
                             if not df_rub_full.empty:
                                 for _, r in df_rub_full.iterrows():
                                     set_existentes.add((str(r['tipo']).strip().lower(), str(r['categoria']).strip().lower(), str(r['subcategoria']).strip().lower()))
                             
                             agregados = 0
+                            filas_insertar = []
                             for _, row in df_carga.iterrows():
                                 t = str(row.get("Tipo", "")).strip().capitalize()
                                 c = str(row.get("Categoría", "")).strip()
@@ -410,13 +408,23 @@ elif seccion_cfg == "💼 Fondos y Rubros":
                                 if t in ["Ingreso", "Egreso"] and c and r:
                                     tupla_check = (t.lower(), c.lower(), r.lower())
                                     if tupla_check not in set_existentes:
-                                        core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, ?)", (t, c, r), commit=False)
+                                        filas_insertar.append((t, c, r))
                                         set_existentes.add(tupla_check)
                                         agregados += 1
-                                        
-                            st.cache_data.clear() # Limpia caché (también ejecuta el commit final pendiente)
+                            
+                            # Guardamos todas las filas nuevas con confirmación inmediata (commit)
+                            if filas_insertar:
+                                with core.get_db() as conn:
+                                    with conn.cursor() as cur:
+                                        from psycopg2.extras import execute_batch
+                                        sql = "INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (%s, %s, %s)"
+                                        execute_batch(cur, sql, filas_insertar)
+                                    conn.commit()
+                            
+                            st.cache_data.clear() # Limpia la caché visual
                             core.registrar_log("Configuración", "Carga Masiva", f"Se importaron {agregados} rubros desde Excel.")
-                            st.success(f"🎉 Carga exitosa: Se agregaron {agregados} rubros nuevos (se omitieron los duplicados o en blanco).")
+                            st.toast(f"🎉 Carga exitosa: Se agregaron {agregados} rubros nuevos.")
+                            st.rerun() # Refresca instantáneamente la pantalla
                         else:
                             st.error("⚠️ El Excel no tiene el formato correcto. Faltan las columnas 'Tipo', 'Categoría' o 'Rubro'.")
                     except Exception as e:
@@ -476,12 +484,12 @@ elif seccion_cfg == "🔒 Cierres de Mes y Auditoría":
 
         if tiene_apertura_propia:
             # Los totales ya incluyen el asiento de apertura
-            ing_efe = float(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["total"].sum()) if not df_m_per.empty else 0.0
-            egr_efe = float(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Egreso")]["total"].sum()) if not df_m_per.empty else 0.0
+            ing_efe = float(df_m_per[(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["total"].sum())]) if not df_m_per.empty else 0.0
+            egr_efe = float(df_m_per[(df_m_per[(df_m_per["medio"] == "Efectivo") & (df_m_per["tipo"] == "Egreso")]["total"].sum())]) if not df_m_per.empty else 0.0
             sal_efe = ing_efe - egr_efe
 
-            ing_ban = float(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["total"].sum()) if not df_m_per.empty else 0.0
-            egr_ban = float(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Egreso")]["total"].sum()) if not df_m_per.empty else 0.0
+            ing_ban = float(df_m_per[(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Ingreso")]["total"].sum())]) if not df_m_per.empty else 0.0
+            egr_ban = float(df_m_per[(df_m_per[(df_m_per["medio"] != "Efectivo") & (df_m_per["tipo"] == "Egreso")]["total"].sum())]) if not df_m_per.empty else 0.0
             sal_ban = ing_ban - egr_ban
         else:
             # 🚀 OPTIMIZACIÓN: Arqueo histórico súper rápido sin descargar tabla completa
