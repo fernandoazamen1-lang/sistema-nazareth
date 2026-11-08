@@ -654,7 +654,7 @@ elif opcion == "Evolución y Gráficos":
             )
 
 # ==============================================================================
-# 3. REGISTRAR MOVIMIENTO MANUAL CON FOTO
+# 3. REGISTRAR MOVIMIENTO MANUAL CON FOTO (Formulario sin bloqueo)
 # ==============================================================================
 elif opcion == "Registrar Movimiento":
     t_mov = st.radio("Tipo:", ["Egreso (Gasto)", "Ingreso"], horizontal=True)
@@ -670,50 +670,59 @@ elif opcion == "Registrar Movimiento":
 
     anio, mes, num_m, f_sug = core.selector_periodo("mov_reg")
 
-    with st.form("form_reg_mov", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        with c1:
-            fecha = st.date_input("Fecha:", value=f_sug)
-            cat = st.selectbox("Categoría:", list(dict_c.keys()))
-            subcat = st.selectbox("Rubro / Subcategoría:", dict_c.get(cat, ["General"]))
-            fondo = st.selectbox("Fondo:", fondos)
-            monto = st.number_input("Monto (S/.):", min_value=0.01, step=10.0, format="%.2f")
-        with c2:
-            medio = st.selectbox("Medio de Pago / Entrega:", core.MEDIOS)
-            comp = st.text_input("Comprobante / N° Recibo / Voucher:", placeholder="Ej. B001-00124 o OP-49210")
-            resp = st.selectbox("Responsable:", resps)
-            det = st.text_area("Detalle / Concepto:")
-            
-        st.markdown("---")
-        st.markdown("📸 **Evidencia del Comprobante (Opcional)**")
-        st.caption("Si abres esta página en tu celular, el botón de abajo te permitirá usar tu cámara para tomar la foto al instante.")
-        foto_up = st.file_uploader("Sube o toma una foto del recibo/voucher", type=["png", "jpg", "jpeg"])
+    # Eliminamos el st.form para que Streamlit detecte los cambios en los desplegables al instante
+    st.markdown("<div style='background: rgba(255, 255, 255, 0.9); padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);'>", unsafe_allow_html=True)
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        fecha = st.date_input("Fecha:", value=f_sug)
+        cat_opts = list(dict_c.keys()) if dict_c else ["General"]
+        cat = st.selectbox("Categoría:", cat_opts)
+        
+        # El rubro ahora se actualiza perfectamente gracias a que ya no hay st.form
+        subcat_opts = dict_c.get(cat, ["General"])
+        subcat = st.selectbox("Rubro / Subcategoría:", subcat_opts)
+        
+        fondo = st.selectbox("Fondo:", fondos)
+        monto = st.number_input("Monto (S/.):", min_value=0.01, step=10.0, format="%.2f")
+    with c2:
+        medio = st.selectbox("Medio de Pago / Entrega:", core.MEDIOS)
+        comp = st.text_input("Comprobante / N° Recibo / Voucher:", placeholder="Ej. B001-00124 o OP-49210")
+        resp = st.selectbox("Responsable:", resps)
+        det = st.text_area("Detalle / Concepto:")
+        
+    st.markdown("---")
+    st.markdown("📸 **Evidencia del Comprobante (Opcional)**")
+    st.caption("Si abres esta página en tu celular, el botón de abajo te permitirá usar tu cámara para tomar la foto al instante.")
+    foto_up = st.file_uploader("Sube o toma una foto del recibo/voucher", type=["png", "jpg", "jpeg"])
 
-        if st.form_submit_button("💾 Guardar Transacción", type="primary"):
-            
-            # 1. Proceso de subida de imagen si el usuario la agregó
-            url_foto = ""
-            if foto_up is not None:
-                with st.spinner("Comprimiendo y guardando comprobante en la nube..."):
-                    nombre_base = f"Recibo_Tes_{comp.strip().replace(' ', '_')}" if comp.strip() else "Recibo_Tes"
-                    url_foto = core.comprimir_y_subir_foto(foto_up, nombre_base)
+    if st.button("💾 Guardar Transacción", type="primary", use_container_width=True):
+        
+        # 1. Proceso de subida de imagen si el usuario la agregó
+        url_foto = ""
+        if foto_up is not None:
+            with st.spinner("Comprimiendo y guardando comprobante en la nube..."):
+                nombre_base = f"Recibo_Tes_{comp.strip().replace(' ', '_')}" if comp.strip() else "Recibo_Tes"
+                url_foto = core.comprimir_y_subir_foto(foto_up, nombre_base)
 
-            # 2. Guardar en Base de datos
-            core.query_db("""
-                INSERT INTO public.movimientos 
-                (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Cobrado')
-            """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp.strip(), det.strip(), resp, url_foto))
-            
-            core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp.strip()})")
-            
-            limpiar_caches_tesoreria()
-            
-            st.toast("✅ Movimiento guardado exitosamente en Tesorería.")
-            st.rerun()
+        # 2. Guardar en Base de datos
+        core.query_db("""
+            INSERT INTO public.movimientos 
+            (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Cobrado')
+        """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp.strip(), det.strip(), resp, url_foto))
+        
+        core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp.strip()})")
+        
+        limpiar_caches_tesoreria()
+        
+        st.toast("✅ Movimiento guardado exitosamente en Tesorería.")
+        st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ==============================================================================
-# 4. MODIFICAR O ELIMINAR CON FOTO
+# 4. MODIFICAR O ELIMINAR CON FOTO (Sin bloqueo dinámico)
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
     st.markdown("#### ⚙️ Gestión de Asientos de Tesorería (Modificar o Eliminar)")
@@ -776,36 +785,51 @@ elif opcion == "⚙️ Modificar o Eliminar":
                 idx_med = core.MEDIOS.index(reg_mov["medio"]) if reg_mov["medio"] in core.MEDIOS else 0
                 idx_resp = resps.index(reg_mov["responsable"]) if reg_mov["responsable"] in resps else 0
 
-                with st.form("form_editar_mov"):
-                    st.info(f"Modificando Asiento ID #{reg_mov['id']} — Tipo actual: **{reg_mov['tipo']}**")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        e_fecha = st.date_input("Fecha:", value=f_val_m)
-                        e_tipo = st.selectbox("Tipo de Movimiento:", ["Ingreso", "Egreso"], index=0 if reg_mov["tipo"] == "Ingreso" else 1)
-                        e_cat = st.text_input("Categoría:", value=str(reg_mov["categoria"]))
-                        e_subcat = st.text_input("Subcategoría / Rubro:", value=str(reg_mov["subcategoria"]))
-                        e_monto = st.number_input("Monto (S/.):", min_value=0.01, value=float(reg_mov["monto"]), step=10.0, format="%.2f")
-                    with c2:
-                        e_fondo = st.selectbox("Fondo:", fondos, index=idx_fnd)
-                        e_medio = st.selectbox("Medio de Pago:", core.MEDIOS, index=idx_med)
-                        e_comp = st.text_input("Comprobante / N° Recibo / Voucher:", value=str(reg_mov.get("comprobante", "") or ""))
-                        e_resp = st.selectbox("Responsable:", resps, index=idx_resp)
-                        e_det = st.text_area("Detalle / Observación:", value=str(reg_mov.get("detalle", "") or ""))
-
-                    st.markdown("---")
+                st.markdown("<div style='background: rgba(255, 255, 255, 0.9); padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);'>", unsafe_allow_html=True)
+                st.info(f"Modificando Asiento ID #{reg_mov['id']} — Tipo actual: **{reg_mov['tipo']}**")
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    e_fecha = st.date_input("Fecha:", value=f_val_m)
+                    e_tipo = st.selectbox("Tipo de Movimiento:", ["Ingreso", "Egreso"], index=0 if reg_mov["tipo"] == "Ingreso" else 1)
                     
-                    # Ver foto actual
-                    url_foto_actual = str(reg_mov.get("archivo_foto", ""))
-                    if url_foto_actual and url_foto_actual.startswith("http"):
-                        st.markdown(f"🖼️ **Comprobante Adjunto:** [🔗 Hacer clic aquí para ver la foto original en tamaño completo]({url_foto_actual})")
+                    # Generar catalogo dinámico basado en e_tipo
+                    dict_c_edit = {}
+                    if not df_rubros_cat.empty:
+                        cats_edit = df_rubros_cat[df_rubros_cat["tipo"] == e_tipo]
+                        for c, g in cats_edit.groupby("categoria"): 
+                            dict_c_edit[c] = g["subcategoria"].tolist()
                     else:
-                        st.caption("No hay ninguna foto guardada para esta transacción.")
-                        
-                    e_foto = st.file_uploader("Actualizar foto (Opcional - Si subes una nueva foto, reemplazará a la actual)", type=["png", "jpg", "jpeg"])
+                        dict_c_edit = {"General": ["General"]}
 
-                    btn_guardar_mov = st.form_submit_button("💾 Guardar Cambios en Tesorería", type="primary")
+                    cat_opts = list(dict_c_edit.keys()) if dict_c_edit else ["General"]
+                    def_cat_idx = cat_opts.index(reg_mov["categoria"]) if reg_mov["categoria"] in cat_opts else 0
+                    e_cat = st.selectbox("Categoría:", cat_opts, index=def_cat_idx)
+                    
+                    rub_opts = dict_c_edit.get(e_cat, ["General"])
+                    def_rub_idx = rub_opts.index(reg_mov["subcategoria"]) if reg_mov["subcategoria"] in rub_opts else 0
+                    e_subcat = st.selectbox("Rubro / Subcategoría:", rub_opts, index=def_rub_idx)
+                    
+                    e_monto = st.number_input("Monto (S/.):", min_value=0.01, value=float(reg_mov["monto"]), step=10.0, format="%.2f")
+                with c2:
+                    e_fondo = st.selectbox("Fondo:", fondos, index=idx_fnd)
+                    e_medio = st.selectbox("Medio de Pago:", core.MEDIOS, index=idx_med)
+                    e_comp = st.text_input("Comprobante / N° Recibo / Voucher:", value=str(reg_mov.get("comprobante", "") or ""))
+                    e_resp = st.selectbox("Responsable:", resps, index=idx_resp)
+                    e_det = st.text_area("Detalle / Observación:", value=str(reg_mov.get("detalle", "") or ""))
 
-                if btn_guardar_mov:
+                st.markdown("---")
+                
+                # Ver foto actual
+                url_foto_actual = str(reg_mov.get("archivo_foto", ""))
+                if url_foto_actual and url_foto_actual.startswith("http"):
+                    st.markdown(f"🖼️ **Comprobante Adjunto:** [🔗 Hacer clic aquí para ver la foto original en tamaño completo]({url_foto_actual})")
+                else:
+                    st.caption("No hay ninguna foto guardada para esta transacción.")
+                    
+                e_foto = st.file_uploader("Actualizar foto (Opcional - Si subes una nueva foto, reemplazará a la actual)", type=["png", "jpg", "jpeg"])
+
+                if st.button("💾 Guardar Cambios en Tesorería", type="primary", use_container_width=True):
                     # 1. Conservar foto vieja, a menos que suba una nueva
                     url_final = url_foto_actual
                     if e_foto is not None:
@@ -827,6 +851,8 @@ elif opcion == "⚙️ Modificar o Eliminar":
                     
                     st.toast("✅ Asiento contable actualizado correctamente.")
                     st.rerun()
+
+                st.markdown("</div>", unsafe_allow_html=True)
 
             elif accion_m == "🗑️ Eliminar Transacción":
                 st.warning(f"⚠️ ¿Confirma eliminar definitivamente la transacción **ID #{reg_mov['id']}** por **S/. {float(reg_mov['monto']):,.2f}** ({reg_mov['detalle']})?")
