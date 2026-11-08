@@ -17,26 +17,41 @@ core.requerir_login()
 core.verificar_acceso_pagina("Pagos Programados")
 core.aplicar_estilos_base()
 
-CATEGORIAS = [
-    "Servicios Básicos (Luz/Agua/Internet)", 
-    "Alquiler de Local / Templo",
-    "Mantenimiento e Infraestructura", 
-    "Préstamos / Financiamiento",
-    "Aportes Distritales / Nacionales", 
-    "Viáticos y Movilidad", 
-    "Otros Compromisos"
-]
-FONDOS = ["General", "Pro-Templo", "Misiones", "Jóvenes", "Damas", "Caballeros"]
 MEDIOS = ["Efectivo", "Depósito / Transferencia", "Yape / Plin"]
 
 # ==============================================================================
-# OPTIMIZACIÓN DE CACHÉ Y CONSULTAS SQL
+# ACTUALIZACIÓN DE BASE DE DATOS Y CACHÉ DINÁMICA
 # ==============================================================================
+# Asegurarnos de que exista la columna subcategoria para almacenar el Rubro
+try:
+    core.query_db("ALTER TABLE public.pagos_programados ADD COLUMN IF NOT EXISTS subcategoria TEXT DEFAULT 'General';")
+except Exception:
+    pass
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_catalogo_egresos():
+    df = core.read_db("SELECT categoria, subcategoria FROM public.rubros_catalogo WHERE tipo = 'Egreso' ORDER BY categoria ASC, subcategoria ASC")
+    dict_c = {}
+    if not df.empty:
+        for c, g in df.groupby("categoria"):
+            dict_c[c] = g["subcategoria"].tolist()
+    else:
+        dict_c = {"General": ["General"]}
+    return dict_c
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_fondos():
+    df_f = core.read_db("SELECT nombre FROM public.fondos_catalogo ORDER BY id ASC")
+    return df_f["nombre"].tolist() if not df_f.empty else ["General"]
+
+dict_rubros_egreso = cargar_catalogo_egresos()
+FONDOS = cargar_fondos()
+
 @st.cache_data(ttl=300, show_spinner=False)
 def cargar_pagos_calendario(anio, mes):
     """Filtra los vencimientos directamente desde PostgreSQL para la cuadrícula"""
     return core.read_db("""
-        SELECT id, codigo, concepto, categoria, monto, fondo, 
+        SELECT id, codigo, concepto, categoria, subcategoria, monto, fondo, 
                CAST(COALESCE(NULLIF(fecha_vencimiento, ''), '1970-01-01') AS DATE) as f_venc, 
                periodicidad, estado, serie_comprobante, numero_comprobante 
         FROM public.pagos_programados 
@@ -103,21 +118,21 @@ def parsear_fecha_segura(valor, default=None):
 def limpiar_concepto_raiz(concepto_str):
     return re.sub(r"\s*\([A-Za-z]{3,}\)$", "", str(concepto_str)).strip()
 
-def _sincronizar_asiento_tesoreria(fecha, categoria, concepto, fondo, monto, medio, comprobante_final, detalle_extra, responsable, es_update=False, comprobante_anterior=""):
+def _sincronizar_asiento_tesoreria(fecha, categoria, subcategoria, concepto, fondo, monto, medio, comprobante_final, detalle_extra, responsable, es_update=False, comprobante_anterior=""):
     detalle = f"Pago programado: {concepto} | {detalle_extra}"
     if es_update:
         clave = comprobante_anterior if comprobante_anterior else comprobante_final
         core.query_db("""
             UPDATE public.movimientos 
-            SET fecha = ?, monto = ?, medio = ?, responsable = ?, detalle = ?, fondo = ?, categoria = ?, comprobante = ?
+            SET fecha = ?, monto = ?, medio = ?, responsable = ?, detalle = ?, fondo = ?, categoria = ?, subcategoria = ?, comprobante = ?
             WHERE comprobante = ?
-        """, (str(fecha), monto, medio, responsable, detalle, fondo, categoria, comprobante_final, clave))
+        """, (str(fecha), monto, medio, responsable, detalle, fondo, categoria, subcategoria, comprobante_final, clave))
     else:
         core.query_db("""
             INSERT INTO public.movimientos 
             (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
             VALUES (?, 'Egreso', ?, ?, ?, ?, ?, ?, ?, ?, '', 'Cobrado')
-        """, (str(fecha), categoria, concepto, fondo, monto, medio, comprobante_final, detalle, responsable))
+        """, (str(fecha), categoria, subcategoria, fondo, monto, medio, comprobante_final, detalle, responsable))
 
 def sumar_meses(fecha_origen, meses_a_sumar):
     anio = fecha_origen.year + (fecha_origen.month + meses_a_sumar - 1) // 12
@@ -156,7 +171,6 @@ if opcion == "📆 Calendario y Cronograma":
 
     mes_num = core.MESES.index(mes_sel) + 1
     
-    # Consulta SQL optimizada
     df_todos = cargar_pagos_calendario(anio_sel, mes_num)
 
     pagos_este_mes = []
@@ -166,7 +180,6 @@ if opcion == "📆 Calendario y Cronograma":
             if pd.isnull(fv):
                 continue
             
-            # Formateo correcto en caso de que SQL retorne texto en lugar de date
             fv = parsear_fecha_segura(fv)
 
             period = str(r.get("periodicidad") or "Mensual")
@@ -175,11 +188,14 @@ if opcion == "📆 Calendario y Cronograma":
             s_comp = "" if s_comp.lower() == "nan" else s_comp
             n_comp = "" if n_comp.lower() == "nan" else n_comp
             folio_comp = f"{s_comp}-{n_comp}".strip("-") if (s_comp or n_comp) else "-"
+            
+            cat = str(r.get("categoria", "General"))
+            subcat = str(r.get("subcategoria", "General"))
 
             if fv.year == anio_sel and fv.month == mes_num:
                 pagos_este_mes.append({
                     "id": r["id"], "codigo": r["codigo"], "concepto": r["concepto"],
-                    "categoria": r["categoria"], "monto": r["monto"], "fondo": r["fondo"],
+                    "categoria": cat, "subcategoria": subcat, "monto": r["monto"], "fondo": r["fondo"],
                     "dia": fv.day, "fecha_venc": fv, "estado": r["estado"],
                     "periodicidad": period, "comprobante": folio_comp
                 })
@@ -189,7 +205,7 @@ if opcion == "📆 Calendario y Cronograma":
                 fv_proy = date(anio_sel, mes_num, dia_calc)
                 pagos_este_mes.append({
                     "id": r["id"], "codigo": f"{r['codigo']} ({mes_sel[:3]})", "concepto": r["concepto"],
-                    "categoria": r["categoria"], "monto": r["monto"], "fondo": r["fondo"],
+                    "categoria": cat, "subcategoria": subcat, "monto": r["monto"], "fondo": r["fondo"],
                     "dia": dia_calc, "fecha_venc": fv_proy, "estado": "Pendiente",
                     "periodicidad": period, "comprobante": "-"
                 })
@@ -277,8 +293,8 @@ if opcion == "📆 Calendario y Cronograma":
         df_mes["Alerta"] = df_mes.apply(calc_alerta, axis=1)
         mapa = {
             "codigo": "Código", "Alerta": "Estado", "fecha_venc": "F. Vencimiento",
-            "concepto": "Concepto", "categoria": "Categoría", "monto": "Monto (S/.)",
-            "fondo": "Fondo", "comprobante": "Comprobante / Folio"
+            "concepto": "Concepto", "categoria": "Categoría", "subcategoria": "Rubro", 
+            "monto": "Monto (S/.)", "fondo": "Fondo", "comprobante": "Comprobante / Folio"
         }
         df_mostrar = df_mes[list(mapa.keys())].rename(columns=mapa)
         st.dataframe(df_mostrar.style.format({"Monto (S/.)": "S/. {:,.2f}"}), use_container_width=True, hide_index=True)
@@ -291,26 +307,35 @@ elif opcion == "➕ Programar Compromiso":
     sig_cod = get_sig_codigo_prg()
     st.info(f"🔖 **Código autogenerado para el compromiso:** `{sig_cod}`")
 
-    with st.form("form_nuevo_pago_prg"):
-        c1, c2 = st.columns(2)
-        with c1:
-            concepto = st.text_input("Concepto / Servicio a Pagar:", placeholder="Ej. Servicio de Luz (Enel), Internet Templo, Cuota de Préstamo")
-            categoria = st.selectbox("Categoría del Gasto:", CATEGORIAS)
-            monto_previsto = st.number_input("Monto Estimado / Cuota (S/.):", min_value=1.0, value=150.0, step=10.0, format="%.2f")
-            fondo_cargo = st.selectbox("Fondo de Salida:", FONDOS)
-        with c2:
-            fecha_venc = st.date_input("Fecha Límite / Vencimiento Inicial:", value=date.today())
-            periodicidad = st.selectbox("Periodicidad:", ["Mensual", "Bimestral", "Único / Puntual", "Anual"])
-            meses_a_generar = 1
-            if periodicidad == "Mensual":
-                meses_a_generar = st.slider("Meses consecutivos a programar en agenda:", min_value=1, max_value=12, value=6)
-            observaciones = st.text_area("Notas / Observaciones:", placeholder="Ej. N° de Suministro: 1284950...")
+    # Eliminamos el st.form para permitir selectores dependientes dinámicos
+    st.markdown("<div style='background: rgba(255, 255, 255, 0.9); padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);'>", unsafe_allow_html=True)
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        cat_opts = list(dict_rubros_egreso.keys())
+        categoria = st.selectbox("Categoría del Gasto:", cat_opts)
+        
+        # El rubro se actualiza automáticamente según la categoría seleccionada
+        subcat_opts = dict_rubros_egreso.get(categoria, ["General"])
+        subcategoria = st.selectbox("Rubro / Subcategoría:", subcat_opts)
+        
+        concepto = st.text_input("Concepto (Descripción Breve):", placeholder="Ej. Servicio de Luz Sede Central")
+        monto_previsto = st.number_input("Monto Estimado / Cuota (S/.):", min_value=1.0, value=150.0, step=10.0, format="%.2f")
+        fondo_cargo = st.selectbox("Fondo de Salida:", FONDOS)
+        
+    with c2:
+        fecha_venc = st.date_input("Fecha Límite / Vencimiento Inicial:", value=date.today())
+        periodicidad = st.selectbox("Periodicidad:", ["Mensual", "Bimestral", "Único / Puntual", "Anual"])
+        meses_a_generar = 1
+        if periodicidad == "Mensual":
+            meses_a_generar = st.slider("Meses consecutivos a programar en agenda:", min_value=1, max_value=12, value=6)
+        observaciones = st.text_area("Notas / Observaciones:", placeholder="Ej. N° de Suministro: 1284950...")
 
-        btn_guardar_prg = st.form_submit_button(f"💾 Agendar Compromiso ({sig_cod})", type="primary")
-
-    if btn_guardar_prg:
+    st.markdown("---")
+    
+    if st.button(f"💾 Agendar Compromiso ({sig_cod})", type="primary", use_container_width=True):
         if not concepto.strip():
-            st.error("Debe ingresar el concepto o servicio a pagar.")
+            st.error("Debe ingresar la descripción o concepto del pago.")
         else:
             if periodicidad == "Mensual" and meses_a_generar > 1:
                 base_num = int(sig_cod.split("-")[-1].strip())
@@ -320,7 +345,7 @@ elif opcion == "➕ Programar Compromiso":
                     f_calc = sumar_meses(fecha_venc, i)
                     nom_concepto = f"{concepto.strip()} ({core.MESES[f_calc.month - 1][:3]})"
                     filas_lote.append((
-                        cod_mes, nom_concepto, categoria, monto_previsto, fondo_cargo, str(f_calc), 'Mensual', 'Pendiente', '', '', observaciones.strip()
+                        cod_mes, nom_concepto, categoria, subcategoria, monto_previsto, fondo_cargo, str(f_calc), 'Mensual', 'Pendiente', '', '', observaciones.strip()
                     ))
                 
                 with core.get_db() as conn:
@@ -328,8 +353,8 @@ elif opcion == "➕ Programar Compromiso":
                         from psycopg2.extras import execute_batch
                         sql_lote = """
                             INSERT INTO public.pagos_programados 
-                            (codigo, concepto, categoria, monto, fondo, fecha_vencimiento, periodicidad, estado, serie_comprobante, numero_comprobante, observaciones)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            (codigo, concepto, categoria, subcategoria, monto, fondo, fecha_vencimiento, periodicidad, estado, serie_comprobante, numero_comprobante, observaciones)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """
                         execute_batch(cur, sql_lote, filas_lote, page_size=100)
                     conn.commit()
@@ -338,14 +363,16 @@ elif opcion == "➕ Programar Compromiso":
             else:
                 core.query_db("""
                     INSERT INTO public.pagos_programados 
-                    (codigo, concepto, categoria, monto, fondo, fecha_vencimiento, periodicidad, estado, serie_comprobante, numero_comprobante, observaciones)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'Pendiente', '', '', ?)
-                """, (sig_cod, concepto.strip(), categoria, monto_previsto, fondo_cargo, str(fecha_venc), periodicidad, observaciones.strip()))
+                    (codigo, concepto, categoria, subcategoria, monto, fondo, fecha_vencimiento, periodicidad, estado, serie_comprobante, numero_comprobante, observaciones)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pendiente', '', '', ?)
+                """, (sig_cod, concepto.strip(), categoria, subcategoria, monto_previsto, fondo_cargo, str(fecha_venc), periodicidad, observaciones.strip()))
                 limpiar_caches_pagos()
                 st.toast(f"✅ Compromiso {sig_cod} agendado correctamente.")
 
             core.registrar_log("Pagos Programados", "Agendado", f"{concepto.strip()} por S/. {monto_previsto:,.2f}")
             st.rerun()
+            
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ==============================================================================
 # 3. EJECUTAR PAGO (LIQUIDAR)
@@ -364,8 +391,12 @@ elif opcion == "💳 Ejecutar Pago (Liquidar)":
         sel_pago = st.selectbox("Seleccione el compromiso a pagar:", list(opciones_liq.keys()))
         id_pago = opciones_liq[sel_pago]
         reg_pago = df_pendientes[df_pendientes["id"] == id_pago].iloc[0]
+        
+        # Recuperamos la subcategoría; si es antigua y no la tiene, asignamos 'General'
+        subcat_bd = reg_pago.get("subcategoria")
+        subcat_bd = subcat_bd if pd.notnull(subcat_bd) else "General"
 
-        st.warning(f"Liquidando: **{reg_pago['concepto']}** (`{reg_pago['codigo']}`). Al confirmar se creará el asiento de egreso en Tesorería.")
+        st.warning(f"Liquidando: **{reg_pago['concepto']}** (`{reg_pago['codigo']}`). Al confirmar se creará el asiento de egreso en Tesorería bajo el rubro '{subcat_bd}'.")
 
         with st.form("form_liquidar_pago"):
             c1, c2 = st.columns(2)
@@ -411,7 +442,7 @@ elif opcion == "💳 Ejecutar Pago (Liquidar)":
 
             detalle_tes = f"Op: {num_op_banco.strip()}" if num_op_banco.strip() else f"Comp: {folio_final}"
             _sincronizar_asiento_tesoreria(
-                f_real_pago, reg_pago["categoria"], reg_pago["concepto"], fondo_real,
+                f_real_pago, reg_pago["categoria"], subcat_bd, reg_pago["concepto"], fondo_real,
                 monto_pagado, medio_pago, folio_final, detalle_tes, responsable_pago.strip(), es_update=False
             )
 
@@ -445,181 +476,4 @@ elif opcion == "⚙️ Modificar o Eliminar":
             with col_f4:
                 filtro_estado = st.selectbox("Estado del Pago:", ["Todos", "Pendiente", "Pagado"], index=0)
             with col_f5:
-                filtro_fondo = st.selectbox("Fondo de Origen:", ["Todos"] + FONDOS, index=0)
-            with col_f6:
-                filtro_categoria = st.selectbox("Categoría:", ["Todos"] + CATEGORIAS, index=0)
-
-        df_filtrado = df_todos_gest
-
-        if filtro_texto.strip():
-            txt = filtro_texto.strip().lower()
-            df_filtrado = df_filtrado[
-                df_filtrado["concepto"].astype(str).str.lower().str.contains(txt) |
-                df_filtrado["codigo"].astype(str).str.lower().str.contains(txt) |
-                df_filtrado["responsable"].astype(str).str.lower().str.contains(txt) |
-                df_filtrado["serie_comprobante"].astype(str).str.lower().str.contains(txt) |
-                df_filtrado["numero_comprobante"].astype(str).str.lower().str.contains(txt)
-            ]
-
-        if filtro_anio != "Todos":
-            df_filtrado = df_filtrado[df_filtrado["anio_venc"] == filtro_anio]
-
-        if filtro_mes != "Todos":
-            mes_n_filtro = core.MESES.index(filtro_mes) + 1
-            df_filtrado = df_filtrado[df_filtrado["mes_venc"] == mes_n_filtro]
-
-        if filtro_estado != "Todos":
-            df_filtrado = df_filtrado[df_filtrado["estado"] == filtro_estado]
-
-        if filtro_fondo != "Todos":
-            df_filtrado = df_filtrado[df_filtrado["fondo"] == filtro_fondo]
-
-        if filtro_categoria != "Todos":
-            df_filtrado = df_filtrado[df_filtrado["categoria"] == filtro_categoria]
-
-        st.caption(f"Coincidencias encontradas: **{len(df_filtrado)}** de {len(df_todos_gest)} registros totales.")
-
-        if df_filtrado.empty:
-            st.warning("⚠️ No se encontraron compromisos que coincidan con los filtros seleccionados.")
-        else:
-            def comp_label(r):
-                s = str(r.get("serie_comprobante") or "")
-                n = str(r.get("numero_comprobante") or "")
-                s = "" if s.lower() == "nan" else s
-                n = "" if n.lower() == "nan" else n
-                folio = f" | Comp: {s}-{n}".strip("-") if (s or n) else ""
-                f_v = str(r.get("fecha_vencimiento") or "Sin fecha")
-                return f"{r['codigo']} — {r['concepto']} (S/. {r['monto']:,.2f} | Vence: {f_v} | {r['estado']}{folio})"
-
-            opciones_mod = {comp_label(r): r["id"] for _, r in df_filtrado.iterrows()}
-
-            st.markdown("---")
-            sel_mod = st.selectbox("📌 Selecciona el registro que deseas gestionar:", list(opciones_mod.keys()))
-            id_mod = opciones_mod[sel_mod]
-            reg_mod = df_filtrado[df_filtrado["id"] == id_mod].iloc[0]
-
-            concepto_raiz = limpiar_concepto_raiz(reg_mod["concepto"])
-
-            accion = st.radio("Acción a realizar sobre el registro:", ["✏️ Editar Datos", "🗑️ Eliminar Compromiso"], horizontal=True)
-
-            if accion == "✏️ Editar Datos":
-                f_v_val = parsear_fecha_segura(reg_mod.get("fecha_vencimiento"))
-
-                idx_cat = CATEGORIAS.index(reg_mod["categoria"]) if reg_mod["categoria"] in CATEGORIAS else 0
-                idx_fon = FONDOS.index(reg_mod["fondo"]) if reg_mod["fondo"] in FONDOS else 0
-
-                s_init = str(reg_mod["serie_comprobante"]) if pd.notnull(reg_mod["serie_comprobante"]) and str(reg_mod["serie_comprobante"]).lower() != "nan" else ""
-                n_init = str(reg_mod["numero_comprobante"]) if pd.notnull(reg_mod["numero_comprobante"]) and str(reg_mod["numero_comprobante"]).lower() != "nan" else ""
-                op_init = str(reg_mod["num_operacion"]) if pd.notnull(reg_mod["num_operacion"]) and str(reg_mod["num_operacion"]).lower() != "nan" else ""
-                resp_init = str(reg_mod["responsable"]) if pd.notnull(reg_mod["responsable"]) and str(reg_mod["responsable"]).lower() != "nan" else "Tesorero General"
-                obs_init = str(reg_mod["observaciones"]) if pd.notnull(reg_mod["observaciones"]) and str(reg_mod["observaciones"]).lower() != "nan" else ""
-
-                with st.form("form_editar_prg"):
-                    st.info(f"Modificando compromiso: **{reg_mod['codigo']}** — {reg_mod['concepto']}")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        e_concepto = st.text_input("Concepto:", value=str(reg_mod["concepto"]))
-                        e_categoria = st.selectbox("Categoría:", CATEGORIAS, index=idx_cat)
-                        e_monto = st.number_input("Monto (S/.):", min_value=1.0, value=float(reg_mod["monto"]), step=5.0, format="%.2f")
-                        e_fondo = st.selectbox("Fondo:", FONDOS, index=idx_fon)
-                        e_venc = st.date_input("Fecha de Vencimiento:", value=f_v_val)
-                        e_estado = st.selectbox("Estado:", ["Pendiente", "Pagado"], index=0 if reg_mod["estado"] != "Pagado" else 1)
-
-                    with c2:
-                        st.markdown("##### 🧾 Serie y Número del Comprobante")
-                        e_serie = st.text_input("Serie:", value=s_init)
-                        e_numero = st.text_input("Número Correlativo:", value=n_init)
-                        e_op = st.text_input("N° Operación Bancaria:", value=op_init)
-                        e_resp = st.text_input("Responsable:", value=resp_init)
-                        e_obs = st.text_area("Observaciones:", value=obs_init)
-
-                    btn_guardar_edit = st.form_submit_button("💾 Guardar Cambios y Actualizar Tesorería", type="primary")
-
-                if btn_guardar_edit:
-                    f_pago_obj = parsear_fecha_segura(reg_mod.get("fecha_pago"), date.today())
-
-                    folio_anterior, _, _, _ = obtener_folio_comprobante(s_init, n_init, reg_mod["codigo"], f_pago_obj)
-                    folio_nuevo, s_new, n_new, t_new = obtener_folio_comprobante(e_serie, e_numero, reg_mod["codigo"], f_pago_obj)
-
-                    core.query_db("""
-                        UPDATE public.pagos_programados SET
-                            concepto = ?, categoria = ?, monto = ?, fondo = ?,
-                            fecha_vencimiento = ?, estado = ?, serie_comprobante = ?,
-                            numero_comprobante = ?, num_operacion = ?, responsable = ?, observaciones = ?
-                        WHERE id = ?
-                    """, (e_concepto.strip(), e_categoria, e_monto, e_fondo, str(e_venc), e_estado, s_new, n_new, e_op.strip(), e_resp.strip(), e_obs.strip(), id_mod))
-
-                    if reg_mod["estado"] == "Pagado" or e_estado == "Pagado":
-                        detalle_act = f"Op: {e_op.strip()}" if e_op.strip() else f"Comp: {folio_nuevo}"
-                        f_real = reg_mod["fecha_pago"] if pd.notnull(reg_mod["fecha_pago"]) and str(reg_mod["fecha_pago"]).lower() != "nan" else str(e_venc)
-                        med_real = reg_mod["medio_pago"] if pd.notnull(reg_mod["medio_pago"]) and str(reg_mod["medio_pago"]).lower() != "nan" else "Efectivo"
-                        _sincronizar_asiento_tesoreria(
-                            f_real, e_categoria, e_concepto.strip(), e_fondo,
-                            e_monto, med_real, folio_nuevo, detalle_act,
-                            e_resp.strip(), es_update=True, comprobante_anterior=folio_anterior
-                        )
-
-                    core.registrar_log("Pagos Programados", "Edición", f"Actualizado {reg_mod['codigo']} | Comprobante: {folio_nuevo}")
-                    limpiar_caches_pagos()
-                    st.toast(f"✅ Cambios guardados y Tesorería sincronizada ({folio_nuevo}).")
-                    st.rerun()
-
-            elif accion == "🗑️ Eliminar Compromiso":
-                st.markdown("#### 🗑️ Opciones de Eliminación")
-                alcance_elim = st.radio(
-                    "Selecciona el alcance de la eliminación:",
-                    [
-                        "📌 Eliminar sólo esta cuota / movimiento puntual",
-                        f"📦 Eliminar la serie / evento general completo ('{concepto_raiz}')"
-                    ]
-                )
-
-                if alcance_elim.startswith("📌"):
-                    s_del = str(reg_mod.get("serie_comprobante") or "")
-                    n_del = str(reg_mod.get("numero_comprobante") or "")
-                    s_del = "" if s_del.lower() == "nan" else s_del
-                    n_del = "" if n_del.lower() == "nan" else n_del
-                    
-                    f_pago_del = parsear_fecha_segura(reg_mod.get("fecha_pago"), date.today())
-                    folio_del, _, _, _ = obtener_folio_comprobante(s_del, n_del, reg_mod["codigo"], f_pago_del)
-
-                    st.warning(f"⚠️ Se eliminará **únicamente** la cuota **{reg_mod['codigo']}** ({reg_mod['concepto']}).")
-                    if st.button("Confirmar Eliminación de Esta Cuota", type="primary"):
-                        core.query_db("DELETE FROM public.pagos_programados WHERE id=?", (id_mod,))
-                        core.query_db("DELETE FROM public.movimientos WHERE comprobante=? OR comprobante=?", (folio_del, reg_mod["codigo"]))
-                        core.registrar_log("Pagos Programados", "Eliminación Puntual", f"Eliminada cuota {reg_mod['codigo']}")
-                        limpiar_caches_pagos()
-                        st.toast(f"🗑️ Cuota {reg_mod['codigo']} eliminada correctamente.")
-                        st.rerun()
-
-                else:
-                    df_serie = core.read_db(
-                        "SELECT * FROM public.pagos_programados WHERE concepto LIKE ? OR concepto = ?",
-                        (f"{concepto_raiz}%", concepto_raiz)
-                    )
-                    cant_serie = len(df_serie)
-                    st.error(f"🚨 **¡ATENCIÓN!** Se eliminarán **todas las {cant_serie} cuotas** vinculadas a la serie **'{concepto_raiz}'**.")
-                    st.write(f"Cuotas incluidas: {', '.join(df_serie['codigo'].tolist())}")
-
-                    if st.button(f"Confirmar Eliminación de la Serie Completa ({cant_serie} cuotas)", type="primary"):
-                        for _, r_s in df_serie.iterrows():
-                            s_s = str(r_s.get("serie_comprobante") or "")
-                            n_s = str(r_s.get("numero_comprobante") or "")
-                            s_s = "" if s_s.lower() == "nan" else s_s
-                            n_s = "" if n_s.lower() == "nan" else n_s
-                            f_pago_s = parsear_fecha_segura(r_s.get("fecha_pago"), date.today())
-                            f_folio_s, _, _, _ = obtener_folio_comprobante(s_s, n_s, r_s["codigo"], f_pago_s)
-                            
-                            core.query_db("DELETE FROM public.movimientos WHERE comprobante=? OR comprobante=?", (f_folio_s, r_s["codigo"]))
-
-                        core.query_db(
-                            "DELETE FROM public.pagos_programados WHERE concepto LIKE ? OR concepto = ?",
-                            (f"{concepto_raiz}%", concepto_raiz)
-                        )
-
-                        core.registrar_log("Pagos Programados", "Eliminación Serie General", f"Eliminada serie completa '{concepto_raiz}' ({cant_serie} registros)")
-                        limpiar_caches_pagos()
-                        st.toast(f"🗑️ Serie '{concepto_raiz}' eliminada.")
-                        st.rerun()
-
-core.mostrar_pie_pagina()
+                filtro_fondo = st.selectbox("
