@@ -270,16 +270,16 @@ elif seccion_cfg == "💼 Fondos y Rubros":
                     st.rerun()
 
     with tab_rub:
-        c_r1, c_r2 = st.columns(2)
+        c_r1, c_r2 = st.columns([1.2, 2])
         with c_r1:
-            st.markdown("##### ➕ Nuevo Rubro / Subcategoría")
+            st.markdown("##### ➕ Nuevo Rubro")
             t_rub = st.selectbox("Filtro por Tipo:", ["Egreso", "Ingreso"], key="tipo_rub")
             cats_disp = df_rub_full[df_rub_full["tipo"] == t_rub]["categoria"].unique().tolist() if not df_rub_full.empty else []
             
             if cats_disp:
                 c_rub = st.selectbox("Pertenece a la Categoría:", cats_disp)
                 n_rub = st.text_input("Nombre del Rubro:", placeholder="Ej. Recibo de Luz, Agua, etc.")
-                if st.button("Crear Rubro", type="primary"):
+                if st.button("Crear Rubro", type="primary", use_container_width=True):
                     if n_rub.strip():
                         core.query_db("INSERT INTO public.rubros_catalogo (tipo, categoria, subcategoria) VALUES (?, ?, ?)", (t_rub, c_rub, n_rub.strip()))
                         core.registrar_log("Configuración", "Catálogo", f"Añadido rubro: {t_rub} - {c_rub} / {n_rub.strip()}")
@@ -289,16 +289,57 @@ elif seccion_cfg == "💼 Fondos y Rubros":
                 st.warning("⚠️ Primero crea una Categoría de este tipo en la pestaña anterior.")
 
         with c_r2:
-            st.markdown("##### 🗑️ Eliminar Rubro Específico")
+            st.markdown("##### 🗑️ Eliminación Múltiple (Seleccionable)")
             if not df_rub_full.empty:
-                opciones_rub_dict = {f"[{r['tipo']}] {r['categoria']} -> {r['subcategoria']}": r["id"] for _, r in df_rub_full.iterrows()}
-                rub_sel = st.selectbox("Seleccione rubro a eliminar:", list(opciones_rub_dict.keys()))
-                if st.button("🗑️ Eliminar Rubro", type="secondary"):
-                    id_r_del = opciones_rub_dict[rub_sel]
-                    core.query_db("DELETE FROM public.rubros_catalogo WHERE id=?", (id_r_del,))
-                    core.registrar_log("Configuración", "Catálogo", f"Eliminado rubro: {rub_sel}")
-                    st.cache_data.clear()
-                    st.rerun()
+                st.caption("Marca las casillas de los rubros que deseas eliminar y luego presiona el botón.")
+                
+                # Preparamos el dataframe para edición agregando columna de Checkbox
+                df_delete = df_rub_full.copy()
+                df_delete.insert(0, "Seleccionar", False)
+                
+                edited_df = st.data_editor(
+                    df_delete,
+                    column_config={
+                        "Seleccionar": st.column_config.CheckboxColumn("Seleccionar", default=False),
+                        "id": None, # Ocultamos el ID para limpieza
+                        "tipo": "Tipo",
+                        "categoria": "Categoría",
+                        "subcategoria": "Rubro"
+                    },
+                    disabled=["tipo", "categoria", "subcategoria"], # Solo se puede editar el checkbox
+                    hide_index=True,
+                    use_container_width=True,
+                    height=280,
+                    key="editor_eliminar_rubros"
+                )
+                
+                # Obtener IDs de las filas marcadas como True
+                rubros_a_eliminar = edited_df[edited_df["Seleccionar"] == True]["id"].tolist()
+                
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button(f"🗑️ Eliminar Seleccionados ({len(rubros_a_eliminar)})", type="primary", disabled=len(rubros_a_eliminar)==0, use_container_width=True):
+                        if rubros_a_eliminar:
+                            placeholders = ",".join(["?"] * len(rubros_a_eliminar))
+                            query = f"DELETE FROM public.rubros_catalogo WHERE id IN ({placeholders})"
+                            core.query_db(query, tuple(rubros_a_eliminar))
+                            
+                            core.registrar_log("Configuración", "Catálogo", f"Eliminados {len(rubros_a_eliminar)} rubros en lote mediante tabla.")
+                            st.cache_data.clear()
+                            st.toast(f"✅ {len(rubros_a_eliminar)} rubros eliminados.")
+                            st.rerun()
+                
+                with col_btn2:
+                    with st.expander("🚨 Eliminar TODOS los Rubros", expanded=False):
+                        st.warning("⚠️ ¿Seguro que deseas eliminar TODOS los rubros? Esta acción vaciará el catálogo por completo.")
+                        if st.button("✅ Sí, vaciar catálogo", type="secondary", use_container_width=True):
+                            core.query_db("TRUNCATE TABLE public.rubros_catalogo RESTART IDENTITY CASCADE;")
+                            core.registrar_log("Configuración", "Catálogo", "Vaciado completo del catálogo de rubros.")
+                            st.cache_data.clear()
+                            st.toast("🗑️ Catálogo de rubros vaciado.")
+                            st.rerun()
+            else:
+                st.info("No hay rubros registrados para eliminar.")
 
     with tab_edit:
         st.markdown("##### ✏️ Editar Rubro Existente")
