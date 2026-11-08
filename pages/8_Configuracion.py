@@ -555,8 +555,25 @@ elif seccion_cfg == "🛡️ Respaldo y Base de Datos" and es_administrador:
                                     pass
                         conn.commit()
 
+                    # --- NUEVO: BORRAR ARCHIVOS DE LA NUBE ---
+                    with st.spinner("Borrando fotos antiguas de la nube para liberar espacio..."):
+                        try:
+                            # 1. Le pedimos a Supabase la lista de todos los archivos guardados
+                            lista_archivos = core.supabase.storage.from_("archivos_iglesia").list()
+                            
+                            # 2. Extraemos los nombres
+                            archivos_a_borrar = [archivo['name'] for archivo in lista_archivos if archivo['name'] != '.emptyFolderPlaceholder']
+                            
+                            # 3. Si hay archivos, le enviamos la lista a Supabase para que los destruya de golpe
+                            if archivos_a_borrar:
+                                core.supabase.storage.from_("archivos_iglesia").remove(archivos_a_borrar)
+                                st.success(f"🧹 Se liberó espacio: {len(archivos_a_borrar)} fotos eliminadas de la nube.")
+                        except Exception as e:
+                            st.warning(f"Se formateó la base de datos, pero hubo un error al limpiar la nube: {e}")
+                    # -----------------------------------------
+
                     st.cache_data.clear() # Limpiar toda la caché
-                    core.registrar_log("Configuración", "RESET", "Sistema formateado de fábrica.")
+                    core.registrar_log("Configuración", "RESET", "Sistema formateado de fábrica y nube limpiada.")
                     st.success("🎉 Base de datos reiniciada de fábrica con éxito.")
                     st.rerun()
                 except Exception as e:
@@ -680,11 +697,11 @@ elif seccion_cfg == "👥 Usuarios y Permisos" and es_administrador:
                         st.toast("✅ Estado actualizado.")
                         st.rerun()
 
-                    if st.button("🗑️ Eliminar Usuario Definitivamente", type="secondary"):
-                        core.query_db("DELETE FROM public.usuarios_sistema WHERE id=?", (id_u_sel,))
-                        core.registrar_log("Usuarios", "Eliminación", f"Eliminado usuario {row_user['usuario']}")
-                        st.toast("🗑️ Usuario eliminado.")
-                        st.rerun()
+                if st.button("🗑️ Eliminar Usuario Definitivamente", type="secondary"):
+                    core.query_db("DELETE FROM public.usuarios_sistema WHERE id=?", (id_u_sel,))
+                    core.registrar_log("Usuarios", "Eliminación", f"Eliminado usuario {row_user['usuario']}")
+                    st.toast("🗑️ Usuario eliminado.")
+                    st.rerun()
 
     except Exception as e:
         st.error(f"Error al gestionar usuarios: {e}")
