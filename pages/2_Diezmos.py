@@ -161,9 +161,10 @@ def render_boucher_png(serie, fecha, nombre, mes, medio, monto, detalle, tesorer
     draw_center(dr, 904, "— 2 Corintios 9:7 —", get_font(14, True), "#047857", w)
 
     dr.rounded_rectangle([(42, 965), (w - 42, 1105)], 12, fill="#F1F5F9", outline="#CBD5E1", width=1)
-    draw_center(dr, 980, "RECEPCIONADO Y CERTIFICADO FORMALMENTE POR:", get_font(13), "#64748B", w)
-    draw_center(dr, 1012, str(tesorero).upper(), get_font(16, True), "#0F172A", w)
-    draw_center(dr, 1048, "Tesorero(a) General  •  Iglesia Evangélica \"Nazareth\"", get_font(13), "#475569", w)
+    draw_center(dr, 978, "RECEPCIONADO Y CERTIFICADO FORMALMENTE POR:", get_font(13), "#64748B", w)
+    draw_center(dr, 1004, str(tesorero).upper(), get_font(16, True), "#0F172A", w)
+    draw_center(dr, 1034, "Tesorero(a) General  •  Iglesia Evangélica \"Nazareth\"", get_font(13), "#475569", w)
+    draw_center(dr, 1064, "Alberto Farfán", get_font(15, True), "#1E3A8A", w)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
