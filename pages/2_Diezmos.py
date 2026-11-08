@@ -435,11 +435,12 @@ if opcion == "Registrar Nuevo Diezmo":
                 det = st.text_input("Observación / Detalle:", placeholder="Ej. Culto Dominical")
             tes = st.text_input("Tesorero(a) Receptor(a):", value=tesorero_def)
             if st.form_submit_button(f"💾 Registrar y Emitir ({sig_cod})", type="primary"):
+                
+                # --- ACTUALIZACIÓN DE COMPATIBILIDAD CON AUDITORIA ---
                 if tes.strip() and tes.strip() != tesorero_def:
-                    core.query_db(
-                        "INSERT INTO public.auditoria (fecha_hora, modulo, accion, descripcion) VALUES (?, 'Config_Tesorero', 'Actualizar', ?)",
-                        (str(date.today()), tes.strip())
-                    )
+                    core.registrar_log("Config_Tesorero", "Actualizar", f"Tesorero actualizado a: {tes.strip()}")
+                # ------------------------------------------------------
+                
                 core.query_db(
                     "INSERT INTO public.diezmos (fecha, id_miembro, nombre_miembro, mes, medio, monto, detalle, codigo_comprobante) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (str(f_d), d_miembros[nom], nom, mes_c, medio, round(float(monto), 2), det.strip(), sig_cod)
