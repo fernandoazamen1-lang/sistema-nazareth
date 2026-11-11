@@ -466,10 +466,10 @@ if opcion == "Libro Detallado":
             filtros_activos.append(f"Texto '{filtro_txt}'")
 
         # ---------------------------------------------------------
-        # ORDENAR CRONOLÓGICAMENTE (De más antiguo a más reciente)
+        # ORDENAR CRONOLÓGICAMENTE (De más RECIENTE a más antiguo)
         # ---------------------------------------------------------
         if not df_fil.empty and "fecha" in df_fil.columns:
-            df_fil = df_fil.sort_values(by=["fecha", "id"], ascending=[True, True])
+            df_fil = df_fil.sort_values(by=["fecha", "id"], ascending=[False, False])
 
         txt_filtros_resumen = ", ".join(filtros_activos) if filtros_activos else "Todos los registros"
 
@@ -513,29 +513,26 @@ if opcion == "Libro Detallado":
         df_mostrar = df_fil[cols_db_mostrar].rename(columns=renombrar_dict)
 
         # -------------------------------------------------------------------
-        # AJUSTE PARA FOTOS: Convertir enlaces en botones clickeables
+        # AJUSTE PARA FOTOS: Evitar que salga la palabra 'None' en gris
         # -------------------------------------------------------------------
-        column_config = {}
         if "Foto Adjunta" in cols_seleccionadas:
-            # Reemplazar urls inválidas por None para que la tabla las deje en blanco
-            df_mostrar["Foto Adjunta"] = df_mostrar["Foto Adjunta"].apply(lambda x: str(x) if str(x).startswith("http") else None)
+            # En lugar de guardar el objeto "None", lo convertimos en un espacio vacío limpio ""
+            df_mostrar["Foto Adjunta"] = df_mostrar["Foto Adjunta"].apply(lambda x: str(x) if str(x).startswith("http") else "")
             
-            # Convertir la columna en tipo Enlace con un botón bonito
-            column_config["Foto Adjunta"] = st.column_config.LinkColumn(
-                "Foto Adjunta",
-                display_text="🖼️ Abrir Foto"
+            st.dataframe(
+                df_mostrar.style.format({"Monto (S/.)": "S/. {:,.2f}"}),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Foto Adjunta": st.column_config.LinkColumn("Foto Adjunta")
+                }
             )
-
-        format_dict = {}
-        if "Monto (S/.)" in cols_seleccionadas:
-            format_dict["Monto (S/.)"] = "S/. {:,.2f}"
-
-        st.dataframe(
-            df_mostrar.style.format(format_dict),
-            use_container_width=True,
-            hide_index=True,
-            column_config=column_config
-        )
+        else:
+            st.dataframe(
+                df_mostrar.style.format({"Monto (S/.)": "S/. {:,.2f}"}),
+                use_container_width=True,
+                hide_index=True
+            )
 
 # ==============================================================================
 # 2. EVOLUCIÓN Y GRÁFICOS
