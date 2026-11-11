@@ -271,7 +271,6 @@ st.markdown("#### 📖 Análisis de Fidelidad y Recaudación de Diezmos")
 df_dz_analisis = pd.DataFrame()
 if not df_dz.empty and "fecha" in df_dz.columns:
     df_dz_temp = df_dz.copy()
-    # 🚀 OPTIMIZACIÓN: Slicing de strings puro
     df_dz_temp["periodo"] = df_dz_temp["fecha"].astype(str).str[:7]
     df_dz_analisis = df_dz_temp.groupby("periodo").agg(
         total_recaudado=("monto", "sum"),
@@ -297,12 +296,12 @@ d4.metric("Cobertura sobre el Padrón", f"{cobertura_padron:.1f}%", help=f"Repre
 st.markdown("---")
 
 # ==============================================================================
-# 5. GENERADOR DE REPORTES (EXCEL Y PDF DIFERIDOS BAJO DEMANDA)
+# 5. GENERADORES DE REPORTES MENSUALES (EXCEL Y PDF)
 # ==============================================================================
-st.markdown("#### 📂 Generador de Informes Oficiales del Periodo")
-st.caption(f"Genera la rendición completa para **{mes_sel} {anio_sel}** con balance de liquidez, adeudos y actividades.")
+st.markdown("#### 📂 Informes Operativos Mensuales (Del Periodo)")
+st.caption(f"Genera la rendición focalizada para el mes de **{mes_sel} {anio_sel}** con balance de liquidez y actividades.")
 
-def generar_excel_integral():
+def generar_excel_integral_mensual():
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
         df_ratios = pd.DataFrame([
@@ -355,7 +354,7 @@ def generar_excel_integral():
 
     return out.getvalue()
 
-def generar_pdf_gerencial():
+def generar_pdf_gerencial_mensual():
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import ParagraphStyle
@@ -476,26 +475,284 @@ def generar_pdf_gerencial():
 col_btn1, col_btn2 = st.columns(2)
 with col_btn1:
     st.download_button(
-        label="📊 Descargar Análisis Completo en Excel (.xlsx)",
-        data=generar_excel_integral,
-        file_name=f"Analisis_Financiero_Nazareth_{periodo_actual_str}.xlsx",
+        label="📊 Descargar Informe Mensual (Excel)",
+        data=generar_excel_integral_mensual,
+        file_name=f"Reporte_Mensual_Nazareth_{periodo_actual_str}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary"
+        use_container_width=True
     )
 
 with col_btn2:
     st.download_button(
-        label="📄 Descargar Informe Mensual con Dictamen en PDF",
-        data=generar_pdf_gerencial,
-        file_name=f"Informe_Financiero_Nazareth_{periodo_actual_str}.pdf",
+        label="📄 Descargar Informe Mensual (PDF)",
+        data=generar_pdf_gerencial_mensual,
+        file_name=f"Reporte_Mensual_Nazareth_{periodo_actual_str}.pdf",
         mime="application/pdf",
-        type="secondary"
+        use_container_width=True
+    )
+
+
+# ==============================================================================
+# 6. GENERADOR DE REPORTES ANUALES (EXCEL Y PDF CON GRÁFICOS)
+# ==============================================================================
+st.markdown("---")
+st.markdown("#### 📊 Informes de Gestión Anual (Presentación Gerencial)")
+st.caption(f"Descarga la recopilación completa de todo el año **{anio_sel}**, incluyendo gráficos, clasificación de gastos, ingresos, diezmos mensuales y actividades consolidadas del año.")
+
+# Preparamos la data anual
+df_mov_anio = df_mov[df_mov["fecha"].astype(str).str.startswith(str(anio_sel))].copy() if not df_mov.empty else pd.DataFrame()
+df_dz_anio = df_dz[df_dz["fecha"].astype(str).str.startswith(str(anio_sel))].copy() if not df_dz.empty else pd.DataFrame()
+df_act_mov_anio = df_act_mov[df_act_mov["fecha"].astype(str).str.startswith(str(anio_sel))].copy() if not df_act_mov.empty else pd.DataFrame()
+df_act_anio = df_act[df_act["fecha"].astype(str).str.startswith(str(anio_sel))].copy() if not df_act.empty else pd.DataFrame()
+
+# Totales Generales Anuales
+ing_anio_tot = float(df_mov_anio[df_mov_anio["tipo"]=="Ingreso"]["monto"].sum()) if not df_mov_anio.empty else 0.0
+egr_anio_tot = float(df_mov_anio[df_mov_anio["tipo"]=="Egreso"]["monto"].sum()) if not df_mov_anio.empty else 0.0
+dz_anio_tot = float(df_dz_anio["monto"].sum()) if not df_dz_anio.empty else 0.0
+
+# Medio de Pago (Efectivo vs Bancos) Anual
+ing_efe_anio = float(df_mov_anio[(df_mov_anio["tipo"]=="Ingreso") & (df_mov_anio["medio"]=="Efectivo")]["monto"].sum()) if not df_mov_anio.empty else 0.0
+ing_ban_anio = float(df_mov_anio[(df_mov_anio["tipo"]=="Ingreso") & (df_mov_anio["medio"]!="Efectivo")]["monto"].sum()) if not df_mov_anio.empty else 0.0
+egr_efe_anio = float(df_mov_anio[(df_mov_anio["tipo"]=="Egreso") & (df_mov_anio["medio"]=="Efectivo")]["monto"].sum()) if not df_mov_anio.empty else 0.0
+egr_ban_anio = float(df_mov_anio[(df_mov_anio["tipo"]=="Egreso") & (df_mov_anio["medio"]!="Efectivo")]["monto"].sum()) if not df_mov_anio.empty else 0.0
+
+# Arrays Mes a Mes para el gráfico PDF
+ing_meses_arr = []
+egr_meses_arr = []
+dz_meses_arr = []
+
+if not df_mov_anio.empty:
+    df_mov_anio["mes_idx"] = df_mov_anio["fecha"].astype(str).str[5:7].astype(int)
+if not df_dz_anio.empty:
+    df_dz_anio["mes_idx"] = df_dz_anio["fecha"].astype(str).str[5:7].astype(int)
+
+for m in range(1, 13):
+    i_m = float(df_mov_anio[(df_mov_anio["tipo"]=="Ingreso") & (df_mov_anio["mes_idx"]==m)]["monto"].sum()) if not df_mov_anio.empty else 0.0
+    e_m = float(df_mov_anio[(df_mov_anio["tipo"]=="Egreso") & (df_mov_anio["mes_idx"]==m)]["monto"].sum()) if not df_mov_anio.empty else 0.0
+    d_m = float(df_dz_anio[df_dz_anio["mes_idx"]==m]["monto"].sum()) if not df_dz_anio.empty else 0.0
+    ing_meses_arr.append(i_m)
+    egr_meses_arr.append(e_m)
+    dz_meses_arr.append(d_m)
+
+def dibujar_grafico_vectorial_pdf_anual(titulo, x_labels, y_vals1, c_hex1, legend1, y_vals2=None, c_hex2=None, legend2=None):
+    from reportlab.graphics.shapes import Drawing, Rect, String, Line
+    from reportlab.lib import colors
+    d = Drawing(520, 160)
+    d.add(Rect(0, 0, 520, 160, fillColor=colors.HexColor("#F8FAFC"), strokeColor=colors.HexColor("#CBD5E1"), strokeWidth=1, rx=6, ry=6))
+    d.add(String(15, 145, titulo, fontName="Helvetica-Bold", fontSize=9, fillColor=colors.HexColor("#0F172A")))
+
+    d.add(Rect(270, 145, 8, 8, fillColor=colors.HexColor(c_hex1), strokeColor=None))
+    d.add(String(282, 145, legend1, fontName="Helvetica", fontSize=7, fillColor=colors.HexColor("#334155")))
+    if y_vals2 and c_hex2 and legend2:
+        d.add(Rect(380, 145, 8, 8, fillColor=colors.HexColor(c_hex2), strokeColor=None))
+        d.add(String(392, 145, legend2, fontName="Helvetica", fontSize=7, fillColor=colors.HexColor("#334155")))
+
+    max_val = max(max(y_vals1) if y_vals1 else [0], max(y_vals2) if y_vals2 else [0])
+    if max_val == 0: max_val = 1.0
+
+    base_y = 25
+    chart_h = 95
+    spacing = 40
+    start_x = 35
+
+    d.add(Line(20, base_y, 500, base_y, strokeColor=colors.HexColor("#94A3B8"), strokeWidth=1))
+
+    for i, mes in enumerate(x_labels):
+        bx = start_x + (i * spacing)
+        v1 = y_vals1[i] if i < len(y_vals1) else 0
+        bh1 = (v1 / max_val) * chart_h
+        d.add(Rect(bx, base_y, 12, max(bh1, 1), fillColor=colors.HexColor(c_hex1), strokeColor=None))
+        
+        if y_vals2:
+            v2 = y_vals2[i] if i < len(y_vals2) else 0
+            bh2 = (v2 / max_val) * chart_h
+            d.add(Rect(bx + 12, base_y, 12, max(bh2, 1), fillColor=colors.HexColor(c_hex2), strokeColor=None))
+
+        d.add(String(bx + 4, base_y - 12, mes[:3], fontName="Helvetica", fontSize=6.5, fillColor=colors.HexColor("#64748B")))
+
+    return d
+
+
+def generar_excel_anual():
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine='openpyxl') as writer:
+        
+        # 1. Resumen Anual
+        df_resumen = pd.DataFrame([
+            {"Métrica": "Año Fiscal", "Valor": anio_sel},
+            {"Métrica": "Total Ingresos Operativos", "Valor": ing_anio_tot},
+            {"Métrica": "Total Egresos y Gastos", "Valor": egr_anio_tot},
+            {"Métrica": "Resultado Neto del Año (Ganancia/Pérdida)", "Valor": ing_anio_tot - egr_anio_tot},
+            {"Métrica": "Total Diezmos Recaudados", "Valor": dz_anio_tot},
+            {"Métrica": "Ingresos por Efectivo", "Valor": ing_efe_anio},
+            {"Métrica": "Ingresos por Banco", "Valor": ing_ban_anio},
+            {"Métrica": "Egresos por Efectivo", "Valor": egr_efe_anio},
+            {"Métrica": "Egresos por Banco", "Valor": egr_ban_anio},
+        ])
+        df_resumen.to_excel(writer, sheet_name="Resumen_Anual", index=False)
+        
+        # 2. Mes a Mes
+        df_meses = pd.DataFrame({
+            "Mes": core.MESES,
+            "Ingresos Totales": ing_meses_arr,
+            "Egresos Totales": egr_meses_arr,
+            "Saldo Neto": [i - e for i, e in zip(ing_meses_arr, egr_meses_arr)],
+            "Diezmos Recaudados": dz_meses_arr
+        })
+        df_meses.to_excel(writer, sheet_name="Comportamiento_Mensual", index=False)
+        
+        # 3. Clasificación de Gastos e Ingresos
+        if not df_mov_anio.empty:
+            df_cat = df_mov_anio.groupby(["tipo", "categoria", "subcategoria"])["monto"].sum().reset_index().sort_values(by=["tipo", "monto"], ascending=[True, False])
+            df_cat.to_excel(writer, sheet_name="Clasificacion_Categorias", index=False)
+            
+        # 4. Actividades del año
+        if not df_act_anio.empty and not df_act_mov_anio.empty:
+            df_mrg_act_a = pd.merge(df_act_mov_anio, df_act_anio, left_on="id_actividad", right_on="id")
+            res_act_a = df_mrg_act_a.groupby("nombre").agg(
+                Ingresos_Cobrados=("monto", lambda x: x[(df_mrg_act_a.loc[x.index, "tipo"] == "Ingreso") & (df_mrg_act_a.loc[x.index, "estado_cobro"] != "Pendiente")].sum()),
+                Egresos=("monto", lambda x: x[df_mrg_act_a.loc[x.index, "tipo"] == "Egreso"].sum()),
+            ).reset_index()
+            res_act_a["Ganancia Neta"] = res_act_a["Ingresos_Cobrados"] - res_act_a["Egresos"]
+            res_act_a.to_excel(writer, sheet_name="Actividades_Anual", index=False)
+
+    return out.getvalue()
+
+def generar_pdf_anual():
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=35, rightMargin=35, topMargin=30, bottomMargin=30)
+    story = []
+
+    c_prim = colors.HexColor("#1E3A8A")
+    c_borde = colors.HexColor("#CBD5E1")
+    style_sec = ParagraphStyle('S1', fontName='Helvetica-Bold', fontSize=9.5, textColor=c_prim, spaceBefore=7, spaceAfter=3)
+
+    t_head = Table([
+        [
+            Paragraph(f"<b>{nom_iglesia.upper()}</b><br/><font size=7.5>{denominacion.upper()}</font>", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=9.5, textColor=c_prim)),
+            Paragraph(f"<b>INFORME ANUAL DE GESTIÓN Y ESTADOS FINANCIEROS {anio_sel}</b><br/><font size=7>Emisión: {date.today().strftime('%d/%m/%Y')}</font>", ParagraphStyle('HD', fontName='Helvetica', fontSize=8, alignment=2))
+        ]
+    ], colWidths=[300, 242])
+    t_head.setStyle(TableStyle([('BOX', (0,0), (-1,-1), 1, c_prim), ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")), ('PADDING', (0,0), (-1,-1), 5)]))
+    story.extend([t_head, Spacer(1, 10)])
+
+    # 1. Kpis Anuales
+    story.append(Paragraph("1. RESUMEN EJECUTIVO ANUAL", style_sec))
+    t_liq = Table([
+        ["TOTAL INGRESOS AÑO", "TOTAL EGRESOS AÑO", "SUPERÁVIT / DÉFICIT NETO", "TOTAL DIEZMOS AÑO"],
+        [f"S/. {ing_anio_tot:,.2f}", f"S/. {egr_anio_tot:,.2f}", f"S/. {ing_anio_tot - egr_anio_tot:,.2f}", f"S/. {dz_anio_tot:,.2f}"]
+    ], colWidths=[135, 135, 135, 137])
+    t_liq.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), c_prim), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,0), 7.5), ('FONTSIZE', (0,1), (-1,1), 9.5),
+        ('GRID', (0,0), (-1,-1), 0.5, c_borde), ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('TEXTCOLOR', (0,1), (0,1), colors.HexColor("#166534")), ('TEXTCOLOR', (1,1), (1,1), colors.HexColor("#991B1B")),
+        ('BACKGROUND', (2,1), (2,1), colors.HexColor("#FEF08A") if (ing_anio_tot - egr_anio_tot) >= 0 else colors.HexColor("#FECACA")),
+        ('PADDING', (0,0), (-1,-1), 4)
+    ]))
+    story.extend([t_liq, Spacer(1, 10)])
+
+    # Grafico Anual
+    story.append(Paragraph("2. EVOLUCIÓN MENSUAL DE INGRESOS VS EGRESOS", style_sec))
+    chart = dibujar_grafico_vectorial_pdf_anual(f"Comportamiento Financiero {anio_sel}", core.MESES, ing_meses_arr, "#10B981", "Ingresos", egr_meses_arr, "#EF4444", "Egresos")
+    story.extend([chart, Spacer(1, 10)])
+
+    # 3. Comportamiento Mensual Tabla
+    story.append(Paragraph("3. COMPORTAMIENTO MENSUAL DETALLADO", style_sec))
+    filas_m = [["MES", "INGRESOS (S/.)", "EGRESOS (S/.)", "SALDO NETO (S/.)", "DIEZMOS (S/.)"]]
+    for m in range(12):
+        s_n = ing_meses_arr[m] - egr_meses_arr[m]
+        filas_m.append([core.MESES[m], f"{ing_meses_arr[m]:,.2f}", f"{egr_meses_arr[m]:,.2f}", f"{s_n:,.2f}", f"{dz_meses_arr[m]:,.2f}"])
+    
+    t_m = Table(filas_m, colWidths=[108, 108, 108, 109, 109])
+    t_m.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#0F172A")), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 7.5),
+        ('GRID', (0,0), (-1,-1), 0.5, c_borde), ('ALIGN', (1,0), (-1,-1), 'RIGHT'), ('ALIGN', (0,0), (0,-1), 'CENTER'),
+        ('PADDING', (0,0), (-1,-1), 3)
+    ]))
+    story.extend([t_m, Spacer(1, 10)])
+
+    # 4. Clasificacion Gastos Top
+    if not df_mov_anio.empty:
+        story.append(Paragraph("4. PRINCIPALES CATEGORÍAS DE EGRESOS (TOP 5)", style_sec))
+        df_egr_cat = df_mov_anio[df_mov_anio["tipo"]=="Egreso"].groupby("categoria")["monto"].sum().reset_index().sort_values(by="monto", ascending=False).head(5)
+        filas_c = [["CATEGORÍA DE GASTO", "MONTO TOTAL INVERTIDO (S/.)"]]
+        for _, r in df_egr_cat.iterrows():
+            filas_c.append([str(r["categoria"]), f"{r['monto']:,.2f}"])
+        t_c = Table(filas_c, colWidths=[400, 142])
+        t_c.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 7.5), ('GRID', (0,0), (-1,-1), 0.5, c_borde), ('ALIGN', (1,0), (1,-1), 'RIGHT')
+        ]))
+        story.extend([t_c, Spacer(1, 10)])
+
+    # 5. Actividades
+    if not df_act_anio.empty and not df_act_mov_anio.empty:
+        story.append(Paragraph("5. RESUMEN ANUAL DE ACTIVIDADES ECLESIÁSTICAS", style_sec))
+        df_mrg_act_a = pd.merge(df_act_mov_anio, df_act_anio, left_on="id_actividad", right_on="id")
+        res_act_a = df_mrg_act_a.groupby("nombre").agg(
+            Ingresos=("monto", lambda x: x[(df_mrg_act_a.loc[x.index, "tipo"] == "Ingreso") & (df_mrg_act_a.loc[x.index, "estado_cobro"] != "Pendiente")].sum()),
+            Egresos=("monto", lambda x: x[df_mrg_act_a.loc[x.index, "tipo"] == "Egreso"].sum()),
+        ).reset_index()
+        filas_a = [["NOMBRE DE ACTIVIDAD", "INGRESOS (S/.)", "EGRESOS (S/.)", "GANANCIA NETA (S/.)"]]
+        for _, r in res_act_a.iterrows():
+            gn = r['Ingresos'] - r['Egresos']
+            filas_a.append([str(r["nombre"])[:35], f"{r['Ingresos']:,.2f}", f"{r['Egresos']:,.2f}", f"{gn:,.2f}"])
+        t_a = Table(filas_a, colWidths=[242, 100, 100, 100])
+        t_a.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 7.5), ('GRID', (0,0), (-1,-1), 0.5, c_borde), ('ALIGN', (1,0), (-1,-1), 'RIGHT')
+        ]))
+        story.extend([t_a, Spacer(1, 20)])
+    else:
+        story.extend([Spacer(1, 20)])
+
+    # Firmas
+    t_firmas = Table([
+        ["__________________________________________", "__________________________________________"],
+        [f"{tesorero_tit.upper()}", f"{pastor_tit.upper()}"],
+        ["Tesorero(a) General Titular", "Pastor(a) Principal Titular"]
+    ], colWidths=[271, 271])
+    t_firmas.setStyle(TableStyle([
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,1), (-1,1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 7.5), ('PADDING', (0,0), (-1,-1), 2)
+    ]))
+    story.append(t_firmas)
+
+    doc.build(story)
+    return buf.getvalue()
+
+col_btn3, col_btn4 = st.columns(2)
+with col_btn3:
+    st.download_button(
+        label="📊 Descargar Reporte Anual Completo (Excel)",
+        data=generar_excel_anual,
+        file_name=f"Reporte_Anual_Nazareth_{anio_sel}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        type="primary"
+    )
+
+with col_btn4:
+    st.download_button(
+        label="📄 Descargar Presentación Anual (PDF)",
+        data=generar_pdf_anual,
+        file_name=f"Presentacion_Anual_Nazareth_{anio_sel}.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+        type="primary"
     )
 
 st.markdown("---")
 
 # ==============================================================================
-# 5. SALDOS POR FONDO Y COMPOSICIÓN (HISTÓRICO ACUMULADO)
+# 7. SALDOS POR FONDO Y COMPOSICIÓN (HISTÓRICO ACUMULADO)
 # ==============================================================================
 st.markdown("##### 💼 Distribución por Fondos Institucionales (Acumulado Histórico)")
 cols_f = st.columns(min(len(fondos_list), 5))
@@ -504,7 +761,7 @@ for idx, f_nom in enumerate(fondos_list[:5]):
     cols_f[idx].metric(f_nom, f"S/. {s_f:,.2f}", delta="Libre" if f_nom == "General" else "Restringido", delta_color="off")
 
 # ==============================================================================
-# 6. ÚLTIMOS ASIENTOS REGISTRADOS
+# 8. ÚLTIMOS ASIENTOS REGISTRADOS
 # ==============================================================================
 st.markdown("##### 📋 Últimas Transacciones Registradas en Tesorería")
 if not df_mov.empty:
