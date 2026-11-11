@@ -243,7 +243,8 @@ if not df_dz.empty and "fecha" in df_dz.columns:
     df_dz_temp["periodo"] = df_dz_temp["fecha"].astype(str).str[:7]
     df_dz_analisis = df_dz_temp.groupby("periodo").agg(
         total_recaudado=("monto", "sum"),
-        cant_diezmantes=("id_miembro", "nunique")
+        cant_diezmantes=("id_miembro", "nunique"),
+        cant_sobres=("id", "count")
     ).reset_index()
     df_dz_analisis["ticket_promedio"] = df_dz_analisis["total_recaudado"] / df_dz_analisis["cant_diezmantes"].replace(0, 1)
     df_dz_analisis = df_dz_analisis.sort_values("periodo", ascending=False)
@@ -332,6 +333,7 @@ def generar_pdf_gerencial_mensual():
         ('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTSIZE', (0,0), (-1,-1), 7.5),
         ('GRID', (0,0), (-1,-1), 0.5, c_borde), ('ALIGN', (2,0), (2,-1), 'RIGHT'),
         ('BACKGROUND', (0,3), (-1,3), colors.HexColor("#EFF6FF")), ('FONTNAME', (0,3), (-1,3), 'Helvetica-Bold'),
+        ('BACKGROUND', (0,4), (-1,4), colors.HexColor("#FEF2F2")), ('FONTNAME', (0,4), (-1,4), 'Helvetica-Bold'),
         ('PADDING', (0,0), (-1,-1), 3.5)
     ]))
     story.extend([t_liq, Spacer(1, 8)])
@@ -432,7 +434,10 @@ def dibujar_grafico_vectorial_pdf_anual(titulo, x_labels, y_vals1, c_hex1, legen
         d.add(Rect(380, 145, 8, 8, fillColor=colors.HexColor(c_hex2), strokeColor=None))
         d.add(String(392, 145, legend2, fontName="Helvetica", fontSize=7, fillColor=colors.HexColor("#334155")))
 
-    max_val = max(max(y_vals1) if y_vals1 else [0], max(y_vals2) if y_vals2 else [0])
+    # CORRECCIÓN DEL CÁLCULO MÁXIMO (Evita el TypeError de la lista)
+    m1 = max(y_vals1) if y_vals1 else 0
+    m2 = max(y_vals2) if y_vals2 else 0
+    max_val = max(m1, m2)
     if max_val == 0: max_val = 1.0
 
     base_y = 25
