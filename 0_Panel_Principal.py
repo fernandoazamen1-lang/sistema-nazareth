@@ -52,7 +52,8 @@ def cargar_catalogos_fijos():
 
 @st.cache_data(ttl=180, show_spinner=False) # Caché de 3 minutos para transacciones
 def cargar_datos_periodo(corte_str):
-    # 🚀 OPTIMIZACIÓN: Añadido WHERE fecha <= %s para no traer datos futuros y reducir peso de red
+    # 🚀 OPTIMIZACIÓN V2: Para el cálculo histórico correcto, extraemos TODO hasta la fecha de corte,
+    # pero EXCLUIMOS radicalmente los asientos de apertura para NUNCA duplicar saldos arrastrados.
     try:
         df_m = core.read_db("""
             SELECT id, fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, estado_credito 
@@ -89,8 +90,9 @@ pastor_tit = cfg_dict.get("pastor_principal", "Pastor Principal")
 tesorero_tit = cfg_dict.get("tesorero_general", "Tesorero General")
 
 # ==============================================================================
-# CÁLCULOS ACUMULADOS (VELOCIDAD EXTREMA - LA DATA YA ESTÁ FILTRADA)
+# CÁLCULOS HISTÓRICOS ACUMULADOS (LIQUIDEZ REAL DE LA IGLESIA AL DÍA DE HOY)
 # ==============================================================================
+# Verificamos si en la BD ya se asentaron los diezmos como "Diezmos Consolidado" para no sumarlos doble
 tiene_asientos_dz = not df_mov[df_mov["comprobante"].str.startswith("ASIENTO-DZ-", na=False)].empty if not df_mov.empty and "comprobante" in df_mov.columns else False
 
 mov_disp = df_mov[df_mov["estado_credito"] != "A Credito"].copy() if not df_mov.empty else pd.DataFrame()
@@ -111,11 +113,10 @@ saldo_caja = ing_efe - egr_efe
 saldo_banco = ing_ban - egr_ban
 total_disp = saldo_caja + saldo_banco
 
-# Ya no hace falta cortar los DataFrames porque SQL lo hizo por nosotros
 df_mov_corte = df_mov 
 df_act_corte = df_act_mov 
 
-# 1. Fondos restringidos
+# 1. Fondos restringidos (Acumulado Histórico)
 fondos_saldos_corte = {}
 if not df_mov_corte.empty:
     for fn in fondos_list:
@@ -129,20 +130,37 @@ else:
 efectivo_libre_operativo = max(fondos_saldos_corte.get("General", 0.0), 0.0)
 efectivo_no_disponible = sum([saldo for fn, saldo in fondos_saldos_corte.items() if fn != "General" and saldo > 0])
 
-# 2. Deudas y cuentas por cobrar
+# 2. Deudas y cuentas por cobrar (Acumulado Histórico)
 cred_tesoreria = float(df_mov_corte[(df_mov_corte["tipo"] == "Ingreso") & (df_mov_corte["estado_credito"] == "A Credito")]["monto"].sum()) if not df_mov_corte.empty else 0.0
 deuda_actividades = float(df_act_corte[(df_act_corte["condicion"] == "Credito") & (df_act_corte["estado_cobro"] == "Pendiente")]["monto"].sum()) if not df_act_corte.empty else 0.0
 total_adeudos = cred_tesoreria + deuda_actividades
 
-# 3. Resumen de Actividades
+# 3. Resumen de Actividades (Acumulado Histórico)
 ing_act_cobradas = float(df_act_corte[(df_act_corte["tipo"] == "Ingreso") & (df_act_corte["estado_cobro"] != "Pendiente")]["monto"].sum()) if not df_act_corte.empty else 0.0
 egr_act_ejecutadas = float(df_act_corte[df_act_corte["tipo"] == "Egreso"]["monto"].sum()) if not df_act_corte.empty else 0.0
 utilidad_neta_act = ing_act_cobradas - egr_act_ejecutadas
 
 # ==============================================================================
-# 1. MÉTRICAS DE LIQUIDEZ Y ADEUDOS
+# CÁLCULOS ESPECÍFICOS DEL MES AISLADO (PARA EVALUAR RENDIMIENTO MENSUAL)
 # ==============================================================================
-st.markdown(f"#### 🏛️ Situación de Liquidez y Adeudos (Al {u_dia:02d} de {mes_sel} {anio_sel})")
+df_mov_mes = pd.DataFrame()
+if not df_mov.empty and "fecha" in df_mov.columns:
+    df_mov_temp = df_mov.copy()
+    # Extraemos solo el YYYY-MM para filtrar
+    df_mov_temp["periodo"] = df_mov_temp["fecha"].astype(str).str[:7]
+    # Aislamos solo los movimientos del mes seleccionado
+    df_mov_mes = df_mov_temp[df_mov_temp["periodo"] == periodo_actual_str].copy()
+
+# OJO: df_mov_mes ya no incluye 'ASIENTO-APERTURA' porque la carga inicial lo limpió.
+ing_periodo = float(df_mov_mes[df_mov_mes["tipo"] == "Ingreso"]["monto"].sum()) if not df_mov_mes.empty else 0.0
+egr_periodo = float(df_mov_mes[df_mov_mes["tipo"] == "Egreso"]["monto"].sum()) if not df_mov_mes.empty else 0.0
+superavit_periodo = ing_periodo - egr_periodo
+
+# ==============================================================================
+# VISTA 1: MÉTRICAS DE LIQUIDEZ Y ADEUDOS (HISTÓRICO ACUMULADO)
+# ==============================================================================
+st.markdown(f"#### 🏛️ Situación de Liquidez y Adeudos (Acumulado Histórico al {u_dia:02d} de {mes_sel} {anio_sel})")
+st.caption("Muestra el dinero real físico y en bancos con el que cuenta la iglesia hoy (excluye duplicidades de asientos de apertura).")
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric(
@@ -167,15 +185,42 @@ c3.metric(
 c4.metric(
     "🏦 Liquidez Total en Tesorería", 
     f"S/. {total_disp:,.2f}", 
-    help="Caja Física + Saldos en Banco consolidados."
+    help="Caja Física + Saldos en Banco consolidados de todos los tiempos."
 )
 
 st.markdown("---")
 
 # ==============================================================================
-# 2. AUDITORÍA FINANCIERA DE ACTIVIDADES
+# VISTA 2: RENDIMIENTO ESPECÍFICO DEL MES (INGRESOS VS EGRESOS DEL PERIODO)
 # ==============================================================================
-st.markdown("#### 🎯 Rendición Financiera de Actividades Eclesiásticas")
+st.markdown(f"#### 📅 Rendimiento Operativo del Mes ({mes_sel.upper()} {anio_sel})")
+st.caption("Aísla el desempeño financiero de este mes específico para ver si la iglesia generó ganancia o pérdida en el periodo.")
+
+r1, r2, r3 = st.columns(3)
+r1.metric(
+    "🟢 Nuevos Ingresos del Mes", 
+    f"S/. {ing_periodo:,.2f}", 
+    help="Dinero fresco que ingresó este mes (Diezmos, Ofrendas, etc)."
+)
+r2.metric(
+    "🔴 Gastos y Egresos del Mes", 
+    f"S/. {egr_periodo:,.2f}", 
+    help="Salidas de dinero ejecutadas durante este mes."
+)
+r3.metric(
+    "⚖️ Resultado Neto del Mes", 
+    f"S/. {superavit_periodo:,.2f}", 
+    delta="Superávit Operativo" if superavit_periodo >= 0 else "Déficit Operativo",
+    delta_color="normal" if superavit_periodo >= 0 else "inverse",
+    help="Diferencia entre los ingresos frescos y los gastos del mes seleccionado."
+)
+
+st.markdown("---")
+
+# ==============================================================================
+# 3. AUDITORÍA FINANCIERA DE ACTIVIDADES
+# ==============================================================================
+st.markdown("#### 🎯 Rendición Financiera de Actividades Eclesiásticas (Histórico)")
 
 act1, act2, act3, act4 = st.columns(4)
 act1.metric("Ingresos Cobrados", f"S/. {ing_act_cobradas:,.2f}")
@@ -220,13 +265,13 @@ if not df_act_corte.empty:
 st.markdown("---")
 
 # ==============================================================================
-# 3. ANÁLISIS DE DIEZMANTE Y FIDELIDAD MENSUAL
+# 4. ANÁLISIS DE DIEZMANTE Y FIDELIDAD MENSUAL
 # ==============================================================================
 st.markdown("#### 📖 Análisis de Fidelidad y Recaudación de Diezmos")
 df_dz_analisis = pd.DataFrame()
 if not df_dz.empty and "fecha" in df_dz.columns:
     df_dz_temp = df_dz.copy()
-    # 🚀 OPTIMIZACIÓN: Slicing de strings puro (100x más rápido que pd.to_datetime)
+    # 🚀 OPTIMIZACIÓN: Slicing de strings puro
     df_dz_temp["periodo"] = df_dz_temp["fecha"].astype(str).str[:7]
     df_dz_analisis = df_dz_temp.groupby("periodo").agg(
         total_recaudado=("monto", "sum"),
@@ -252,21 +297,10 @@ d4.metric("Cobertura sobre el Padrón", f"{cobertura_padron:.1f}%", help=f"Repre
 st.markdown("---")
 
 # ==============================================================================
-# 4. GENERADOR DE REPORTES (EXCEL Y PDF DIFERIDOS BAJO DEMANDA)
+# 5. GENERADOR DE REPORTES (EXCEL Y PDF DIFERIDOS BAJO DEMANDA)
 # ==============================================================================
 st.markdown("#### 📂 Generador de Informes Oficiales del Periodo")
 st.caption(f"Genera la rendición completa para **{mes_sel} {anio_sel}** con balance de liquidez, adeudos y actividades.")
-
-df_mov_mes = pd.DataFrame()
-if not df_mov.empty and "fecha" in df_mov.columns:
-    df_mov_temp = df_mov.copy()
-    # 🚀 OPTIMIZACIÓN: Slicing en lugar de conversión pesada a datetime
-    df_mov_temp["periodo"] = df_mov_temp["fecha"].astype(str).str[:7]
-    df_mov_mes = df_mov_temp[df_mov_temp["periodo"] == periodo_actual_str].copy()
-
-ing_periodo = float(df_mov_mes[df_mov_mes["tipo"] == "Ingreso"]["monto"].sum()) if not df_mov_mes.empty else 0.0
-egr_periodo = float(df_mov_mes[df_mov_mes["tipo"] == "Egreso"]["monto"].sum()) if not df_mov_mes.empty else 0.0
-superavit_periodo = ing_periodo - egr_periodo
 
 def generar_excel_integral():
     out = io.BytesIO()
@@ -274,15 +308,18 @@ def generar_excel_integral():
         df_ratios = pd.DataFrame([
             {"Indicador": "Fecha de Corte", "Valor": fecha_corte_str},
             {"Indicador": "Periodo Evaluado", "Valor": f"{mes_sel} {anio_sel}"},
+            {"Indicador": "=== HISTÓRICO ACUMULADO ===", "Valor": ""},
             {"Indicador": "Efectivo Disponible (Fondo General Libre)", "Valor": f"S/. {efectivo_libre_operativo:,.2f}"},
             {"Indicador": "Efectivo No Disponible (Fondos Restringidos)", "Valor": f"S/. {efectivo_no_disponible:,.2f}"},
-            {"Indicador": "Total Liquidez en Tesorería", "Valor": f"S/. {total_disp:,.2f}"},
+            {"Indicador": "Total Liquidez Histórica en Tesorería", "Valor": f"S/. {total_disp:,.2f}"},
             {"Indicador": "Cuentas por Cobrar Totales (Adeudos)", "Valor": f"S/. {total_adeudos:,.2f}"},
             {"Indicador": "Deuda de Actividades por Cobrar", "Valor": f"S/. {deuda_actividades:,.2f}"},
-            {"Indicador": "Ganancia Neta en Actividades", "Valor": f"S/. {utilidad_neta_act:,.2f}"},
-            {"Indicador": "Ingresos Totales del Mes", "Valor": f"S/. {ing_periodo:,.2f}"},
-            {"Indicador": "Egresos Totales del Mes", "Valor": f"S/. {egr_periodo:,.2f}"},
-            {"Indicador": "Resultado Operativo del Mes", "Valor": f"S/. {superavit_periodo:,.2f}"},
+            {"Indicador": "Ganancia Neta Histórica en Actividades", "Valor": f"S/. {utilidad_neta_act:,.2f}"},
+            {"Indicador": "=== RENDIMIENTO DEL MES AISLADO ===", "Valor": ""},
+            {"Indicador": f"Nuevos Ingresos del Mes ({mes_sel})", "Valor": f"S/. {ing_periodo:,.2f}"},
+            {"Indicador": f"Gastos y Egresos del Mes ({mes_sel})", "Valor": f"S/. {egr_periodo:,.2f}"},
+            {"Indicador": f"Resultado Neto del Mes ({mes_sel})", "Valor": f"S/. {superavit_periodo:,.2f}"},
+            {"Indicador": "=== DIEZMOS ===", "Valor": ""},
             {"Indicador": "Hermanos Diezmantes", "Valor": diez_mes},
             {"Indicador": "Cobertura sobre el Padrón", "Valor": f"{cobertura_padron:.1f}%"},
             {"Indicador": "Ticket Promedio por Diezmante", "Valor": f"S/. {ticket_mes:,.2f}"}
@@ -291,14 +328,14 @@ def generar_excel_integral():
 
         if not df_mov_mes.empty:
             er_agrupado = df_mov_mes.groupby(["tipo", "categoria", "subcategoria"])["monto"].sum().reset_index()
-            er_agrupado.to_excel(writer, sheet_name="Estado_Resultados", index=False)
+            er_agrupado.to_excel(writer, sheet_name=f"Ingresos_Egresos_{mes_sel}", index=False)
         else:
-            pd.DataFrame({"Mensaje": ["Sin movimientos registrados en este mes"]}).to_excel(writer, sheet_name="Estado_Resultados", index=False)
+            pd.DataFrame({"Mensaje": ["Sin movimientos registrados en este mes"]}).to_excel(writer, sheet_name=f"Ingresos_Egresos_{mes_sel}", index=False)
 
         if not df_act_corte.empty:
-            df_act_corte.to_excel(writer, sheet_name="Actividades_Detalle", index=False)
+            df_act_corte.to_excel(writer, sheet_name="Actividades_Historico", index=False)
         else:
-            pd.DataFrame({"Mensaje": ["Sin actividades a la fecha de corte"]}).to_excel(writer, sheet_name="Actividades_Detalle", index=False)
+            pd.DataFrame({"Mensaje": ["Sin actividades a la fecha de corte"]}).to_excel(writer, sheet_name="Actividades_Historico", index=False)
 
         saldos_fondos_data = []
         for fn in fondos_list:
@@ -309,9 +346,9 @@ def generar_excel_integral():
                 "Condición": "Libre Disponibilidad" if fn == "General" else "Fondo Restringido",
                 "Total Ingresos": i_f, 
                 "Total Egresos": e_f, 
-                "Saldo al Corte": i_f - e_f
+                "Saldo Acumulado al Corte": i_f - e_f
             })
-        pd.DataFrame(saldos_fondos_data).to_excel(writer, sheet_name="Balance_Fondos", index=False)
+        pd.DataFrame(saldos_fondos_data).to_excel(writer, sheet_name="Balance_Fondos_Historico", index=False)
 
         if not df_dz_analisis.empty:
             df_dz_analisis.to_excel(writer, sheet_name="Analisis_Diezmos", index=False)
@@ -338,7 +375,7 @@ def generar_pdf_gerencial():
     t_head = Table([
         [
             Paragraph(f"<b>{nom_iglesia.upper()}</b><br/><font size=7.5>{denominacion.upper()}</font><br/><font size=7 color='#64748B'>DEPARTAMENTO DE ADMINISTRACIÓN Y TESORERÍA GENERAL</font>", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=9.5, textColor=c_prim)),
-            Paragraph(f"<b>INFORME FINANCIERO MENSUAL Y DE ACTIVIDADES</b><br/><font size=8.5 color='#B45309'><b>CORTE AL: {u_dia:02d} DE {mes_sel.upper()} {anio_sel}</b></font><br/><font size=7>Emisión: {date.today().strftime('%d/%m/%Y')}</font>", ParagraphStyle('HD', fontName='Helvetica', fontSize=7.5, alignment=2))
+            Paragraph(f"<b>INFORME FINANCIERO MENSUAL GERENCIAL</b><br/><font size=8.5 color='#B45309'><b>CORTE AL: {u_dia:02d} DE {mes_sel.upper()} {anio_sel}</b></font><br/><font size=7>Emisión: {date.today().strftime('%d/%m/%Y')}</font>", ParagraphStyle('HD', fontName='Helvetica', fontSize=7.5, alignment=2))
         ]
     ], colWidths=[330, 212])
     t_head.setStyle(TableStyle([
@@ -348,12 +385,12 @@ def generar_pdf_gerencial():
     ]))
     story.extend([t_head, Spacer(1, 8)])
 
-    story.append(Paragraph("1. ESTADO DE DISPONIBILIDAD LÍQUIDA Y ADEUDOS PENDIENTES", style_sec))
+    story.append(Paragraph("1. ESTADO DE DISPONIBILIDAD LÍQUIDA Y ADEUDOS PENDIENTES (ACUMULADO HISTÓRICO)", style_sec))
     t_liq = Table([
         ["CONCEPTO FINANCIERO", "CLASIFICACIÓN TÉCNICA", "MONTO AL CORTE (S/.)"],
         ["EFECTIVO DISPONIBLE OPERATIVO", "Fondo General (Uso libre para operación)", f"S/. {efectivo_libre_operativo:,.2f}"],
         ["EFECTIVO NO DISPONIBLE (RESTRINGIDO)", "Fondos Específicos (Pro-Templo, Misiones, etc.)", f"S/. {efectivo_no_disponible:,.2f}"],
-        ["TOTAL LIQUIDEZ CONSOLIDADA", "Suma en Caja Física y Cuentas Bancarias", f"S/. {total_disp:,.2f}"],
+        ["TOTAL LIQUIDEZ HISTÓRICA CONSOLIDADA", "Suma en Caja Física y Cuentas Bancarias", f"S/. {total_disp:,.2f}"],
         ["CUENTAS POR COBRAR (SE ADEUDA)", "Pendiente en Actividades y Créditos", f"S/. {total_adeudos:,.2f}"]
     ], colWidths=[230, 202, 110])
     t_liq.setStyle(TableStyle([
@@ -371,7 +408,27 @@ def generar_pdf_gerencial():
     ]))
     story.extend([t_liq, Spacer(1, 8)])
 
-    story.append(Paragraph("2. BALANCE Y AUDITORÍA DE ACTIVIDADES ECLESIÁSTICAS", style_sec))
+    story.append(Paragraph(f"2. RENDIMIENTO FINANCIERO AISLADO DEL MES ({mes_sel.upper()} {anio_sel})", style_sec))
+    t_er = Table([
+        ["PARTIDA", "IMPORTE", "PARTIDA DE DIEZMOS", "RESULTADO"],
+        [f"Ingresos Nuevos del Mes:", f"S/. {ing_periodo:,.2f}", "Recaudación en Diezmos:", f"S/. {rec_mes:,.2f}"],
+        [f"Gastos Ejecutados del Mes:", f"S/. {egr_periodo:,.2f}", "Hermanos Diezmantes:", f"{diez_mes} de {total_padron}"],
+        [f"Resultado Neto Operativo del Mes:", f"S/. {superavit_periodo:,.2f}", "Ticket Promedio:", f"S/. {ticket_mes:,.2f}"]
+    ], colWidths=[150, 120, 152, 120])
+    t_er.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
+        ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+        ('FONTSIZE', (0,0), (-1,-1), 7.5),
+        ('GRID', (0,0), (-1,-1), 0.5, c_borde),
+        ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+        ('ALIGN', (3,0), (3,-1), 'RIGHT'),
+        ('BACKGROUND', (0,3), (1,3), colors.HexColor("#FEF08A") if superavit_periodo >= 0 else colors.HexColor("#FECACA")),
+        ('FONTNAME', (0,3), (1,3), 'Helvetica-Bold'),
+        ('PADDING', (0,0), (-1,-1), 3.5)
+    ]))
+    story.extend([t_er, Spacer(1, 8)])
+
+    story.append(Paragraph("3. BALANCE Y AUDITORÍA DE ACTIVIDADES ECLESIÁSTICAS (HISTÓRICO)", style_sec))
     t_act = Table([
         ["CONCEPTO DE ACTIVIDADES", "RESULTADO OBTENIDO", "OBSERVACIÓN / DESTINO"],
         ["Ingresos Efectivamente Cobrados", f"S/. {ing_act_cobradas:,.2f}", "Recaudado en eventos y proyectos"],
@@ -390,30 +447,12 @@ def generar_pdf_gerencial():
     ]))
     story.extend([t_act, Spacer(1, 8)])
 
-    story.append(Paragraph(f"3. ESTADO OPERATIVO DEL MES ({mes_sel.upper()} {anio_sel}) Y DIEZMOS", style_sec))
-    t_er = Table([
-        ["PARTIDA", "IMPORTE", "PARTIDA DE DIEZMOS", "RESULTADO"],
-        ["Ingresos Totales Mes:", f"S/. {ing_periodo:,.2f}", "Recaudación en Diezmos:", f"S/. {rec_mes:,.2f}"],
-        ["Egresos Totales Mes:", f"S/. {egr_periodo:,.2f}", "Hermanos Diezmantes:", f"{diez_mes} de {total_padron}"],
-        ["Resultado Neto Mes:", f"S/. {superavit_periodo:,.2f}", "Ticket Promedio:", f"S/. {ticket_mes:,.2f}"]
-    ], colWidths=[150, 120, 152, 120])
-    t_er.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
-        ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
-        ('FONTSIZE', (0,0), (-1,-1), 7.5),
-        ('GRID', (0,0), (-1,-1), 0.5, c_borde),
-        ('ALIGN', (1,0), (1,-1), 'RIGHT'),
-        ('ALIGN', (3,0), (3,-1), 'RIGHT'),
-        ('PADDING', (0,0), (-1,-1), 3.5)
-    ]))
-    story.extend([t_er, Spacer(1, 8)])
-
     story.append(Paragraph("4. DICTAMEN FINANCIERO E INTERPRETACIÓN PARA LA JUNTA DIRECTIVA", style_sec))
-    diag_liquidez = "favorable y autosuficiente" if efectivo_libre_operativo > 500 else "ajustada, recomendando priorizar cobros"
+    diag_liquidez = "favorable y autosuficiente" if efectivo_libre_operativo > 500 else "ajustada, recomendando cautela"
     texto_dictamen = f"""
-    <b>A. Disponibilidad y Salvaguarda de Fondos:</b> Al corte del {u_dia:02d} de {mes_sel} de {anio_sel}, la congregación posee una disponibilidad operativa libre de <b>S/. {efectivo_libre_operativo:,.2f}</b>. Los fondos restringidos ascienden a <b>S/. {efectivo_no_disponible:,.2f}</b>, los cuales no deben comprometerse en obligaciones ordinarias por tener asignación específica.<br/>
-    <b>B. Diagnóstico de Cuentas por Cobrar:</b> Se registra un adeudo acumulado total de <b>S/. {total_adeudos:,.2f}</b> (donde <b>S/. {deuda_actividades:,.2f}</b> corresponden a actividades eclesiásticas). La posición operativa general se evalúa como <b>{diag_liquidez}</b>. Se instruye a la tesorería agilizar la recuperación de estos adeudos para convertirlos en liquidez real.<br/>
-    <b>C. Rendimiento de Actividades:</b> Las actividades desarrolladas han producido una ganancia neta líquida de <b>S/. {utilidad_neta_act:,.2f}</b>, demostrando un margen de contribución positivo a los objetivos de la congregación.
+    <b>A. Disponibilidad y Salvaguarda de Fondos:</b> Al corte del {u_dia:02d} de {mes_sel} de {anio_sel}, la congregación posee una liquidez física e histórica operativa de <b>S/. {efectivo_libre_operativo:,.2f}</b> de libre disponibilidad. Los fondos restringidos ascienden a <b>S/. {efectivo_no_disponible:,.2f}</b>, los cuales no deben comprometerse en gastos corrientes.<br/>
+    <b>B. Diagnóstico Mensual y Adeudos:</b> Evaluando únicamente el mes de {mes_sel} {anio_sel}, la iglesia generó un resultado operativo neto de <b>S/. {superavit_periodo:,.2f}</b>. Asimismo, se arrastra un adeudo total histórico de <b>S/. {total_adeudos:,.2f}</b> por cobrar. La posición general se evalúa como <b>{diag_liquidez}</b>.<br/>
+    <b>C. Rendimiento de Actividades:</b> A lo largo del tiempo, las actividades desarrolladas han producido una ganancia neta consolidada de <b>S/. {utilidad_neta_act:,.2f}</b>, demostrando un margen de contribución positivo.
     """
     story.extend([Paragraph(texto_dictamen, style_body), Spacer(1, 18)])
 
@@ -456,9 +495,9 @@ with col_btn2:
 st.markdown("---")
 
 # ==============================================================================
-# 5. SALDOS POR FONDO Y COMPOSICIÓN
+# 5. SALDOS POR FONDO Y COMPOSICIÓN (HISTÓRICO ACUMULADO)
 # ==============================================================================
-st.markdown("##### 💼 Distribución por Fondos Institucionales")
+st.markdown("##### 💼 Distribución por Fondos Institucionales (Acumulado Histórico)")
 cols_f = st.columns(min(len(fondos_list), 5))
 for idx, f_nom in enumerate(fondos_list[:5]):
     s_f = fondos_saldos_corte.get(f_nom, 0.0)
