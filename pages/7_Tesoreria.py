@@ -82,7 +82,7 @@ def generar_comprobante_auto(subcat):
     prefijo = f"{pref_s}"
     
     # 2. Consultar a la BD el último correlativo para esa serie exacta
-    df_u = core.read_db("SELECT comprobante FROM public.movimientos WHERE comprobante LIKE ? ORDER BY id DESC LIMIT 1", (f"{prefijo}-%",))
+    df_u = core.read_db("SELECT comprobante FROM public.movimientos WHERE comprobante LIKE %s ORDER BY id DESC LIMIT 1", (f"{prefijo}-%",))
     if df_u.empty:
         return f"{prefijo}-000001"
     else:
@@ -91,7 +91,7 @@ def generar_comprobante_auto(subcat):
             num = int(ult.split("-")[-1])
             return f"{prefijo}-{num + 1:06d}"
         except Exception:
-            df_c = core.read_db("SELECT COUNT(*) as t FROM public.movimientos WHERE comprobante LIKE ?", (f"{prefijo}-%",))
+            df_c = core.read_db("SELECT COUNT(*) as t FROM public.movimientos WHERE comprobante LIKE %s", (f"{prefijo}-%",))
             cant = df_c.iloc[0]["t"] if not df_c.empty else 0
             return f"{prefijo}-{int(cant) + 1:06d}"
 
@@ -684,233 +684,435 @@ elif opcion == "Evolución y Gráficos":
 # 3. REGISTRAR MOVIMIENTO MANUAL CON FOTO (Formulario sin bloqueo)
 # ==============================================================================
 elif opcion == "Registrar Movimiento":
-    t_mov = st.radio("Tipo:", ["Egreso (Gasto)", "Ingreso"], horizontal=True)
-    tipo_cl = "Egreso" if "Egreso" in t_mov else "Ingreso"
-
-    dict_c = {}
-    if not df_rubros_cat.empty:
-        cats = df_rubros_cat[df_rubros_cat["tipo"] == tipo_cl]
-        for c, g in cats.groupby("categoria"): 
-            dict_c[c] = g["subcategoria"].tolist()
-    else:
-        dict_c = {"General": ["General"]}
-
-    anio, mes, num_m, f_sug = core.selector_periodo("mov_reg")
-
-    # Eliminamos el st.form para que Streamlit detecte los cambios en los desplegables al instante
-    st.markdown("<div style='background: rgba(255, 255, 255, 0.9); padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);'>", unsafe_allow_html=True)
     
-    c1, c2 = st.columns(2)
-    with c1:
-        fecha = st.date_input("Fecha:", value=f_sug)
-        cat_opts = list(dict_c.keys()) if dict_c else ["General"]
-        cat = st.selectbox("Categoría:", cat_opts)
+    tab_manual, tab_masiva = st.tabs(["✍️ Registro Manual (Uno por uno)", "📥 Carga Masiva (Excel)"])
+    
+    with tab_manual:
+        t_mov = st.radio("Tipo:", ["Egreso (Gasto)", "Ingreso"], horizontal=True)
+        tipo_cl = "Egreso" if "Egreso" in t_mov else "Ingreso"
+    
+        dict_c = {}
+        if not df_rubros_cat.empty:
+            cats = df_rubros_cat[df_rubros_cat["tipo"] == tipo_cl]
+            for c, g in cats.groupby("categoria"): 
+                dict_c[c] = g["subcategoria"].tolist()
+        else:
+            dict_c = {"General": ["General"]}
+    
+        anio, mes, num_m, f_sug = core.selector_periodo("mov_reg")
+    
+        # Eliminamos el st.form para que Streamlit detecte los cambios en los desplegables al instante
+        st.markdown("<div style='background: rgba(255, 255, 255, 0.9); padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);'>", unsafe_allow_html=True)
         
-        # El rubro ahora se actualiza perfectamente gracias a que ya no hay st.form
-        subcat_opts = dict_c.get(cat, ["General"])
-        subcat = st.selectbox("Rubro / Subcategoría:", subcat_opts)
+        c1, c2 = st.columns(2)
+        with c1:
+            fecha = st.date_input("Fecha:", value=f_sug)
+            cat_opts = list(dict_c.keys()) if dict_c else ["General"]
+            cat = st.selectbox("Categoría:", cat_opts)
+            
+            # El rubro ahora se actualiza perfectamente gracias a que ya no hay st.form
+            subcat_opts = dict_c.get(cat, ["General"])
+            subcat = st.selectbox("Rubro / Subcategoría:", subcat_opts)
+            
+            fondo = st.selectbox("Fondo:", fondos)
+            monto = st.number_input("Monto (S/.):", min_value=0.01, step=10.0, format="%.2f")
+        with c2:
+            medio = st.selectbox("Medio de Pago / Entrega:", core.MEDIOS)
+            comp = st.text_input("Comprobante / N° Recibo / Voucher (Opcional):", placeholder="Si lo dejas vacío se autogenerará")
+            resp = st.selectbox("Responsable:", resps)
+            det = st.text_area("Detalle / Concepto:")
+            
+        st.markdown("---")
+        st.markdown("📸 **Evidencia del Comprobante (Opcional)**")
+        st.caption("Si abres esta página en tu celular, el botón de abajo te permitirá usar tu cámara para tomar la foto al instante.")
+        foto_up = st.file_uploader("Sube o toma una foto del recibo/voucher", type=["png", "jpg", "jpeg"])
+    
+        if st.button("💾 Guardar Transacción", type="primary", use_container_width=True):
+            
+            comp_final = comp.strip()
+            if not comp_final:
+                comp_final = generar_comprobante_auto(subcat)
+            
+            # 1. Proceso de subida de imagen si el usuario la agregó
+            url_foto = ""
+            if foto_up is not None:
+                with st.spinner("Comprimiendo y guardando comprobante en la nube..."):
+                    nombre_base = f"Recibo_Tes_{comp_final.replace(' ', '_')}"
+                    url_foto = core.comprimir_y_subir_foto(foto_up, nombre_base)
+    
+            # 2. Guardar en Base de datos
+            core.query_db("""
+                INSERT INTO public.movimientos 
+                (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Cobrado')
+            """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp_final, det.strip(), resp, url_foto))
+            
+            core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp_final})")
+            
+            limpiar_caches_tesoreria()
+            
+            st.toast(f"✅ Movimiento guardado exitosamente en Tesorería con comprobante {comp_final}.")
+            st.rerun()
+    
+        st.markdown("</div>", unsafe_allow_html=True)
         
-        fondo = st.selectbox("Fondo:", fondos)
-        monto = st.number_input("Monto (S/.):", min_value=0.01, step=10.0, format="%.2f")
-    with c2:
-        medio = st.selectbox("Medio de Pago / Entrega:", core.MEDIOS)
-        comp = st.text_input("Comprobante / N° Recibo / Voucher (Opcional):", placeholder="Si lo dejas vacío se autogenerará")
-        resp = st.selectbox("Responsable:", resps)
-        det = st.text_area("Detalle / Concepto:")
+    with tab_masiva:
+        st.markdown("##### 📥 Carga Masiva de Movimientos por Excel")
+        st.caption("Ahorra tiempo subiendo múltiples ingresos o egresos de golpe. Primero descarga la plantilla, llénala y luego súbela. Si dejas la columna 'Comprobante' vacía, el sistema autogenerará el correlativo por ti.")
         
-    st.markdown("---")
-    st.markdown("📸 **Evidencia del Comprobante (Opcional)**")
-    st.caption("Si abres esta página en tu celular, el botón de abajo te permitirá usar tu cámara para tomar la foto al instante.")
-    foto_up = st.file_uploader("Sube o toma una foto del recibo/voucher", type=["png", "jpg", "jpeg"])
+        def generar_plantilla_tesoreria():
+            df_template = pd.DataFrame({
+                "Fecha": ["2026-11-01", "2026-11-02"],
+                "Tipo": ["Ingreso", "Egreso"],
+                "Categoría": ["Ofrendas", "Servicios Básicos"],
+                "Rubro": ["Ofrenda Culto Central", "Recibo de Luz"],
+                "Fondo": ["General", "General"],
+                "Monto": [150.50, 85.00],
+                "Medio": ["Efectivo", "Depósito / Transferencia"],
+                "Comprobante": ["", "REC-001"],
+                "Responsable": ["Tesorero General", "Tesorero General"],
+                "Detalle": ["Ofrenda dominical", "Pago de luz octubre"]
+            })
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as w:
+                df_template.to_excel(w, index=False)
+            return output.getvalue()
 
-    if st.button("💾 Guardar Transacción", type="primary", use_container_width=True):
+        col_desc, col_up = st.columns([1, 2])
+        with col_desc:
+            st.download_button(
+                label="⬇️ Descargar Plantilla (.xlsx)",
+                data=generar_plantilla_tesoreria(),
+                file_name="Plantilla_Tesoreria.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         
-        comp_final = comp.strip()
-        if not comp_final:
-            comp_final = generar_comprobante_auto(subcat)
-        
-        # 1. Proceso de subida de imagen si el usuario la agregó
-        url_foto = ""
-        if foto_up is not None:
-            with st.spinner("Comprimiendo y guardando comprobante en la nube..."):
-                nombre_base = f"Recibo_Tes_{comp_final.replace(' ', '_')}"
-                url_foto = core.comprimir_y_subir_foto(foto_up, nombre_base)
+        with col_up:
+            up_excel = st.file_uploader("Sube aquí tu plantilla llena:", type=["xlsx"])
+            if up_excel:
+                if st.button("🚀 Procesar e Importar Excel", type="primary"):
+                    try:
+                        df_carga = pd.read_excel(up_excel)
+                        req_cols = ["Fecha", "Tipo", "Categoría", "Rubro", "Fondo", "Monto", "Medio", "Responsable"]
+                        
+                        if all(col in df_carga.columns for col in req_cols):
+                            agregados = 0
+                            filas_insertar = []
+                            
+                            # Diccionario en memoria para rastrear correlativos durante el bucle masivo
+                            contadores_locales = {}
+                            
+                            def parsear_fecha_c(val):
+                                if pd.isnull(val): return date.today()
+                                if isinstance(val, (date, datetime)): return val
+                                try: return pd.to_datetime(val).date()
+                                except: return date.today()
 
-        # 2. Guardar en Base de datos
-        core.query_db("""
-            INSERT INTO public.movimientos 
-            (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Cobrado')
-        """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp_final, det.strip(), resp, url_foto))
-        
-        core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp_final})")
-        
-        limpiar_caches_tesoreria()
-        
-        st.toast(f"✅ Movimiento guardado exitosamente en Tesorería con comprobante {comp_final}.")
-        st.rerun()
+                            for _, row in df_carga.iterrows():
+                                fecha_obj = parsear_fecha_c(row.get("Fecha"))
+                                f_str = str(fecha_obj)
+                                
+                                tipo_m = str(row.get("Tipo", "Ingreso")).strip().capitalize()
+                                cat_m = str(row.get("Categoría", "General")).strip()
+                                rub_m = str(row.get("Rubro", "General")).strip()
+                                fon_m = str(row.get("Fondo", "General")).strip()
+                                
+                                try:
+                                    mto_m = float(row.get("Monto", 0.0))
+                                except ValueError:
+                                    mto_m = 0.0
+                                    
+                                med_m = str(row.get("Medio", "Efectivo")).strip()
+                                comp_m = str(row.get("Comprobante", "")).strip()
+                                if comp_m.lower() == "nan": comp_m = ""
+                                
+                                resp_m = str(row.get("Responsable", "Tesorero General")).strip()
+                                if resp_m.lower() == "nan": resp_m = "Tesorero General"
+                                
+                                det_m = str(row.get("Detalle", "")).strip()
+                                if det_m.lower() == "nan": det_m = ""
 
-    st.markdown("</div>", unsafe_allow_html=True)
+                                # Generador inteligente en bloque para evitar consultas lentas
+                                if not comp_m:
+                                    s_cl = str(rub_m).replace(" ", "").upper()
+                                    s_cl = ''.join(e for e in s_cl if e.isalnum())
+                                    pref_s = s_cl[:4] if len(s_cl) >= 4 else s_cl.ljust(4, 'X')
+                                    prefijo_bd = f"{pref_s}"
+                                    
+                                    if prefijo_bd not in contadores_locales:
+                                        df_u = core.read_db("SELECT comprobante FROM public.movimientos WHERE comprobante LIKE %s ORDER BY id DESC LIMIT 1", (f"{prefijo_bd}-%",))
+                                        if df_u.empty:
+                                            contadores_locales[prefijo_bd] = 1
+                                        else:
+                                            try:
+                                                ult = df_u.iloc[0]["comprobante"]
+                                                num = int(ult.split("-")[-1])
+                                                contadores_locales[prefijo_bd] = num + 1
+                                            except:
+                                                contadores_locales[prefijo_bd] = 1
+                                                
+                                    comp_m = f"{prefijo_bd}-{contadores_locales[prefijo_bd]:06d}"
+                                    contadores_locales[prefijo_bd] += 1
+
+                                if mto_m > 0 and tipo_m in ["Ingreso", "Egreso"]:
+                                    filas_insertar.append((
+                                        f_str, tipo_m, cat_m, rub_m, fon_m, round(mto_m, 2), med_m, comp_m, det_m, resp_m, '', 'Cobrado'
+                                    ))
+                                    agregados += 1
+                                    
+                            if filas_insertar:
+                                with core.get_db() as conn:
+                                    with conn.cursor() as cur:
+                                        from psycopg2.extras import execute_batch
+                                        sql_masivo = """
+                                            INSERT INTO public.movimientos 
+                                            (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                        """
+                                        execute_batch(cur, sql_masivo, filas_insertar)
+                                    conn.commit()
+                            
+                            limpiar_caches_tesoreria()
+                            core.registrar_log("Tesorería", "Carga Masiva", f"Se importaron {agregados} movimientos desde Excel.")
+                            st.toast(f"🎉 Carga exitosa: Se agregaron {agregados} movimientos nuevos a Tesorería.")
+                            st.rerun()
+                        else:
+                            st.error(f"⚠️ El Excel no tiene el formato correcto. Faltan las columnas exactas: {', '.join(req_cols)}")
+                    except Exception as e:
+                        st.error(f"Error procesando el Excel: {e}")
 
 # ==============================================================================
 # 4. MODIFICAR O ELIMINAR CON FOTO (Sin bloqueo dinámico)
 # ==============================================================================
 elif opcion == "⚙️ Modificar o Eliminar":
-    st.markdown("#### ⚙️ Gestión de Asientos de Tesorería (Modificar o Eliminar)")
     
-    if df_mov_global.empty:
-        st.info("No hay transacciones registradas en Tesorería.")
-    else:
-        with st.expander("🔎 Filtros para Localizar Asiento Contable", expanded=True):
-            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-            with col_f1:
-                b_txt = st.text_input("Buscar por Detalle / Comprobante / Responsable:", placeholder="Ej. Luz, CORTE-1, Enel...")
-            with col_f2:
-                anios_disp = ["Todos"] + sorted([int(a) for a in df_mov_global["anio"].dropna().unique()], reverse=True)
-                b_anio = st.selectbox("Año:", anios_disp, index=0)
-            with col_f3:
-                b_mes = st.selectbox("Mes:", ["Todos"] + core.MESES, index=0)
-            with col_f4:
-                b_tipo = st.selectbox("Tipo:", ["Todos", "Ingreso", "Egreso"], index=0)
-
-        df_filtrado_mov = df_mov_global
-        if b_txt.strip():
-            t_l = b_txt.strip().lower()
-            df_filtrado_mov = df_filtrado_mov[
-                df_filtrado_mov["detalle"].astype(str).str.lower().str.contains(t_l) |
-                df_filtrado_mov["comprobante"].astype(str).str.lower().str.contains(t_l) |
-                df_filtrado_mov["responsable"].astype(str).str.lower().str.contains(t_l)
-            ]
-        if b_anio != "Todos":
-            df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["anio"] == b_anio]
-        if b_mes != "Todos":
-            mes_num_f = core.MESES.index(b_mes) + 1
-            df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["mes_num"] == mes_num_f]
-        if b_tipo != "Todos":
-            df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["tipo"] == b_tipo]
-
-        st.caption(f"Coincidencias encontradas: **{len(df_filtrado_mov)}** de {len(df_mov_global)} transacciones.")
-
-        if df_filtrado_mov.empty:
-            st.warning("⚠️ No se encontraron movimientos con los filtros especificados.")
+    tab_indiv, tab_masiva_elim = st.tabs(["📌 Gestión Individual", "🗑️ Eliminación Masiva por Fechas"])
+    
+    with tab_indiv:
+        st.markdown("#### ⚙️ Gestión de Asientos de Tesorería (Individual)")
+        
+        if df_mov_global.empty:
+            st.info("No hay transacciones registradas en Tesorería.")
         else:
-            def label_mov(r):
-                c_str = f" | Comp: {r['comprobante']}" if r.get('comprobante') else ""
-                return f"ID #{r['id']} [{r['fecha']}] {r['tipo']} — S/. {float(r['monto']):,.2f} ({str(r['detalle'])[:30]}){c_str}"
-
-            opciones_mov_dict = {label_mov(r): r["id"] for _, r in df_filtrado_mov.iterrows()}
-            st.markdown("---")
-            sel_asiento = st.selectbox("📌 Selecciona la transacción que deseas gestionar:", list(opciones_mov_dict.keys()))
-            id_mov_sel = opciones_mov_dict[sel_asiento]
-            reg_mov = df_filtrado_mov[df_filtrado_mov["id"] == id_mov_sel].iloc[0]
-
-            accion_m = st.radio("Acción a realizar:", ["✏️ Editar Asiento", "🗑️ Eliminar Transacción"], horizontal=True)
-
-            if accion_m == "✏️ Editar Asiento":
-                try: 
-                    f_val_m = datetime.strptime(str(reg_mov["fecha"]), "%Y-%m-%d").date()
-                except Exception: 
-                    f_val_m = date.today()
-
-                idx_fnd = fondos.index(reg_mov["fondo"]) if reg_mov["fondo"] in fondos else 0
-                idx_med = core.MEDIOS.index(reg_mov["medio"]) if reg_mov["medio"] in core.MEDIOS else 0
-                idx_resp = resps.index(reg_mov["responsable"]) if reg_mov["responsable"] in resps else 0
-
-                st.markdown("<div style='background: rgba(255, 255, 255, 0.9); padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);'>", unsafe_allow_html=True)
-                st.info(f"Modificando Asiento ID #{reg_mov['id']} — Tipo actual: **{reg_mov['tipo']}**")
-                
-                c1, c2 = st.columns(2)
-                with c1:
-                    e_fecha = st.date_input("Fecha:", value=f_val_m)
-                    e_tipo = st.selectbox("Tipo de Movimiento:", ["Ingreso", "Egreso"], index=0 if reg_mov["tipo"] == "Ingreso" else 1)
-                    
-                    # Generar catalogo dinámico basado en e_tipo
-                    dict_c_edit = {}
-                    if not df_rubros_cat.empty:
-                        cats_edit = df_rubros_cat[df_rubros_cat["tipo"] == e_tipo]
-                        for c, g in cats_edit.groupby("categoria"): 
-                            dict_c_edit[c] = g["subcategoria"].tolist()
-                    else:
-                        dict_c_edit = {"General": ["General"]}
-
-                    cat_opts = list(dict_c_edit.keys()) if dict_c_edit else ["General"]
-                    def_cat_idx = cat_opts.index(reg_mov["categoria"]) if reg_mov["categoria"] in cat_opts else 0
-                    e_cat = st.selectbox("Categoría:", cat_opts, index=def_cat_idx)
-                    
-                    rub_opts = dict_c_edit.get(e_cat, ["General"])
-                    def_rub_idx = rub_opts.index(reg_mov["subcategoria"]) if reg_mov["subcategoria"] in rub_opts else 0
-                    e_subcat = st.selectbox("Rubro / Subcategoría:", rub_opts, index=def_rub_idx)
-                    
-                    e_monto = st.number_input("Monto (S/.):", min_value=0.01, value=float(reg_mov["monto"]), step=10.0, format="%.2f")
-                with c2:
-                    e_fondo = st.selectbox("Fondo:", fondos, index=idx_fnd)
-                    e_medio = st.selectbox("Medio de Pago:", core.MEDIOS, index=idx_med)
-                    e_comp = st.text_input("Comprobante / N° Recibo / Voucher (Opcional):", value=str(reg_mov.get("comprobante", "") or ""))
-                    e_resp = st.selectbox("Responsable:", resps, index=idx_resp)
-                    e_det = st.text_area("Detalle / Observación:", value=str(reg_mov.get("detalle", "") or ""))
-
+            with st.expander("🔎 Filtros para Localizar Asiento Contable", expanded=True):
+                col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                with col_f1:
+                    b_txt = st.text_input("Buscar por Detalle / Comprobante / Responsable:", placeholder="Ej. Luz, CORTE-1, Enel...")
+                with col_f2:
+                    anios_disp = ["Todos"] + sorted([int(a) for a in df_mov_global["anio"].dropna().unique()], reverse=True)
+                    b_anio = st.selectbox("Año:", anios_disp, index=0)
+                with col_f3:
+                    b_mes = st.selectbox("Mes:", ["Todos"] + core.MESES, index=0)
+                with col_f4:
+                    b_tipo = st.selectbox("Tipo:", ["Todos", "Ingreso", "Egreso"], index=0)
+    
+            df_filtrado_mov = df_mov_global
+            if b_txt.strip():
+                t_l = b_txt.strip().lower()
+                df_filtrado_mov = df_filtrado_mov[
+                    df_filtrado_mov["detalle"].astype(str).str.lower().str.contains(t_l) |
+                    df_filtrado_mov["comprobante"].astype(str).str.lower().str.contains(t_l) |
+                    df_filtrado_mov["responsable"].astype(str).str.lower().str.contains(t_l)
+                ]
+            if b_anio != "Todos":
+                df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["anio"] == b_anio]
+            if b_mes != "Todos":
+                mes_num_f = core.MESES.index(b_mes) + 1
+                df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["mes_num"] == mes_num_f]
+            if b_tipo != "Todos":
+                df_filtrado_mov = df_filtrado_mov[df_filtrado_mov["tipo"] == b_tipo]
+    
+            st.caption(f"Coincidencias encontradas: **{len(df_filtrado_mov)}** de {len(df_mov_global)} transacciones.")
+    
+            if df_filtrado_mov.empty:
+                st.warning("⚠️ No se encontraron movimientos con los filtros especificados.")
+            else:
+                def label_mov(r):
+                    c_str = f" | Comp: {r['comprobante']}" if r.get('comprobante') else ""
+                    return f"ID #{r['id']} [{r['fecha']}] {r['tipo']} — S/. {float(r['monto']):,.2f} ({str(r['detalle'])[:30]}){c_str}"
+    
+                opciones_mov_dict = {label_mov(r): r["id"] for _, r in df_filtrado_mov.iterrows()}
                 st.markdown("---")
-                
-                # Ver foto actual
-                url_foto_actual = str(reg_mov.get("archivo_foto", ""))
-                if url_foto_actual and url_foto_actual.startswith("http"):
-                    st.markdown(f"🖼️ **Comprobante Adjunto:** [🔗 Hacer clic aquí para ver la foto original en tamaño completo]({url_foto_actual})")
-                else:
-                    st.caption("No hay ninguna foto guardada para esta transacción.")
+                sel_asiento = st.selectbox("📌 Selecciona la transacción que deseas gestionar:", list(opciones_mov_dict.keys()))
+                id_mov_sel = opciones_mov_dict[sel_asiento]
+                reg_mov = df_filtrado_mov[df_filtrado_mov["id"] == id_mov_sel].iloc[0]
+    
+                accion_m = st.radio("Acción a realizar:", ["✏️ Editar Asiento", "🗑️ Eliminar Transacción"], horizontal=True)
+    
+                if accion_m == "✏️ Editar Asiento":
+                    try: 
+                        f_val_m = datetime.strptime(str(reg_mov["fecha"]), "%Y-%m-%d").date()
+                    except Exception: 
+                        f_val_m = date.today()
+    
+                    idx_fnd = fondos.index(reg_mov["fondo"]) if reg_mov["fondo"] in fondos else 0
+                    idx_med = core.MEDIOS.index(reg_mov["medio"]) if reg_mov["medio"] in core.MEDIOS else 0
+                    idx_resp = resps.index(reg_mov["responsable"]) if reg_mov["responsable"] in resps else 0
+    
+                    st.markdown("<div style='background: rgba(255, 255, 255, 0.9); padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);'>", unsafe_allow_html=True)
+                    st.info(f"Modificando Asiento ID #{reg_mov['id']} — Tipo actual: **{reg_mov['tipo']}**")
                     
-                e_foto = st.file_uploader("Actualizar foto (Opcional - Si subes una nueva foto, reemplazará a la actual)", type=["png", "jpg", "jpeg"])
-
-                if st.button("💾 Guardar Cambios en Tesorería", type="primary", use_container_width=True):
-                    
-                    comp_final = e_comp.strip()
-                    if not comp_final:
-                        comp_final = generar_comprobante_auto(e_subcat)
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        e_fecha = st.date_input("Fecha:", value=f_val_m)
+                        e_tipo = st.selectbox("Tipo de Movimiento:", ["Ingreso", "Egreso"], index=0 if reg_mov["tipo"] == "Ingreso" else 1)
                         
-                    # 1. Conservar foto vieja, a menos que suba una nueva
-                    url_final = url_foto_actual
-                    if e_foto is not None:
-                        with st.spinner("Subiendo nuevo comprobante a la nube..."):
-                            url_final = core.comprimir_y_subir_foto(e_foto, f"Recibo_Edit_{id_mov_sel}")
-
-                    # 2. Actualizar registro en BD
-                    core.query_db("""
-                        UPDATE public.movimientos SET
-                            fecha = ?, tipo = ?, categoria = ?, subcategoria = ?,
-                            fondo = ?, monto = ?, medio = ?, comprobante = ?,
-                            responsable = ?, detalle = ?, archivo_foto = ?
-                        WHERE id = ?
-                    """, (str(e_fecha), e_tipo, e_cat.strip(), e_subcat.strip(), e_fondo, round(float(e_monto), 2), e_medio, comp_final, e_resp, e_det.strip(), url_final, id_mov_sel))
-
-                    core.registrar_log("Tesorería", "Edición", f"Actualizado asiento ID #{id_mov_sel} por S/. {e_monto:,.2f}")
+                        # Generar catalogo dinámico basado en e_tipo
+                        dict_c_edit = {}
+                        if not df_rubros_cat.empty:
+                            cats_edit = df_rubros_cat[df_rubros_cat["tipo"] == e_tipo]
+                            for c, g in cats_edit.groupby("categoria"): 
+                                dict_c_edit[c] = g["subcategoria"].tolist()
+                        else:
+                            dict_c_edit = {"General": ["General"]}
+    
+                        cat_opts = list(dict_c_edit.keys()) if dict_c_edit else ["General"]
+                        def_cat_idx = cat_opts.index(reg_mov["categoria"]) if reg_mov["categoria"] in cat_opts else 0
+                        e_cat = st.selectbox("Categoría:", cat_opts, index=def_cat_idx)
+                        
+                        rub_opts = dict_c_edit.get(e_cat, ["General"])
+                        def_rub_idx = rub_opts.index(reg_mov["subcategoria"]) if reg_mov["subcategoria"] in rub_opts else 0
+                        e_subcat = st.selectbox("Rubro / Subcategoría:", rub_opts, index=def_rub_idx)
+                        
+                        e_monto = st.number_input("Monto (S/.):", min_value=0.01, value=float(reg_mov["monto"]), step=10.0, format="%.2f")
+                    with c2:
+                        e_fondo = st.selectbox("Fondo:", fondos, index=idx_fnd)
+                        e_medio = st.selectbox("Medio de Pago:", core.MEDIOS, index=idx_med)
+                        e_comp = st.text_input("Comprobante / N° Recibo / Voucher (Opcional):", value=str(reg_mov.get("comprobante", "") or ""))
+                        e_resp = st.selectbox("Responsable:", resps, index=idx_resp)
+                        e_det = st.text_area("Detalle / Observación:", value=str(reg_mov.get("detalle", "") or ""))
+    
+                    st.markdown("---")
                     
-                    limpiar_caches_tesoreria()
-                    
-                    st.toast("✅ Asiento contable actualizado correctamente.")
-                    st.rerun()
+                    # Ver foto actual
+                    url_foto_actual = str(reg_mov.get("archivo_foto", ""))
+                    if url_foto_actual and url_foto_actual.startswith("http"):
+                        st.markdown(f"🖼️ **Comprobante Adjunto:** [🔗 Hacer clic aquí para ver la foto original en tamaño completo]({url_foto_actual})")
+                    else:
+                        st.caption("No hay ninguna foto guardada para esta transacción.")
+                        
+                    e_foto = st.file_uploader("Actualizar foto (Opcional - Si subes una nueva foto, reemplazará a la actual)", type=["png", "jpg", "jpeg"])
+    
+                    if st.button("💾 Guardar Cambios en Tesorería", type="primary", use_container_width=True):
+                        
+                        comp_final = e_comp.strip()
+                        if not comp_final:
+                            comp_final = generar_comprobante_auto(e_subcat)
+                            
+                        # 1. Conservar foto vieja, a menos que suba una nueva
+                        url_final = url_foto_actual
+                        if e_foto is not None:
+                            with st.spinner("Subiendo nuevo comprobante a la nube..."):
+                                url_final = core.comprimir_y_subir_foto(e_foto, f"Recibo_Edit_{id_mov_sel}")
+    
+                        # 2. Actualizar registro en BD
+                        core.query_db("""
+                            UPDATE public.movimientos SET
+                                fecha = ?, tipo = ?, categoria = ?, subcategoria = ?,
+                                fondo = ?, monto = ?, medio = ?, comprobante = ?,
+                                responsable = ?, detalle = ?, archivo_foto = ?
+                            WHERE id = ?
+                        """, (str(e_fecha), e_tipo, e_cat.strip(), e_subcat.strip(), e_fondo, round(float(e_monto), 2), e_medio, comp_final, e_resp, e_det.strip(), url_final, id_mov_sel))
+    
+                        core.registrar_log("Tesorería", "Edición", f"Actualizado asiento ID #{id_mov_sel} por S/. {e_monto:,.2f}")
+                        
+                        limpiar_caches_tesoreria()
+                        
+                        st.toast("✅ Asiento contable actualizado correctamente.")
+                        st.rerun()
+    
+                    st.markdown("</div>", unsafe_allow_html=True)
+    
+                elif accion_m == "🗑️ Eliminar Transacción":
+                    st.warning(f"⚠️ ¿Confirma eliminar definitivamente la transacción **ID #{reg_mov['id']}** por **S/. {float(reg_mov['monto']):,.2f}** ({reg_mov['detalle']})?")
+                    if st.button("Eliminar Definitivamente", type="primary"):
+                        
+                        # 1. BORRAR FOTO FÍSICA DE LA NUBE (Si existe)
+                        url_foto = str(reg_mov.get("archivo_foto", ""))
+                        if url_foto and url_foto.startswith("http"):
+                            try:
+                                # Cortamos la URL para quedarnos solo con el nombre del archivo
+                                ruta_archivo = url_foto.split("archivos_iglesia/")[-1]
+                                core.supabase.storage.from_("archivos_iglesia").remove([ruta_archivo])
+                            except Exception as e:
+                                st.warning(f"El registro se borrará, pero hubo un error al borrar la foto en la nube: {e}")
+    
+                        # 2. BORRAR REGISTRO DE LA BASE DE DATOS
+                        core.query_db("DELETE FROM public.movimientos WHERE id=?", (id_mov_sel,))
+                        core.registrar_log("Tesorería", "Eliminación", f"Eliminado asiento ID #{id_mov_sel} de S/. {float(reg_mov['monto']):,.2f}")
+                        
+                        limpiar_caches_tesoreria()
+                        
+                        st.toast("🗑️ Transacción y foto adjunta eliminadas de Tesorería.")
+                        st.rerun()
 
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            elif accion_m == "🗑️ Eliminar Transacción":
-                st.warning(f"⚠️ ¿Confirma eliminar definitivamente la transacción **ID #{reg_mov['id']}** por **S/. {float(reg_mov['monto']):,.2f}** ({reg_mov['detalle']})?")
-                if st.button("Eliminar Definitivamente", type="primary"):
-                    
-                    # 1. BORRAR FOTO FÍSICA DE LA NUBE (Si existe)
-                    url_foto = str(reg_mov.get("archivo_foto", ""))
-                    if url_foto and url_foto.startswith("http"):
-                        try:
-                            # Cortamos la URL para quedarnos solo con el nombre del archivo
-                            ruta_archivo = url_foto.split("archivos_iglesia/")[-1]
-                            core.supabase.storage.from_("archivos_iglesia").remove([ruta_archivo])
-                        except Exception as e:
-                            st.warning(f"El registro se borrará, pero hubo un error al borrar la foto en la nube: {e}")
-
-                    # 2. BORRAR REGISTRO DE LA BASE DE DATOS
-                    core.query_db("DELETE FROM public.movimientos WHERE id=?", (id_mov_sel,))
-                    core.registrar_log("Tesorería", "Eliminación", f"Eliminado asiento ID #{id_mov_sel} de S/. {float(reg_mov['monto']):,.2f}")
-                    
-                    limpiar_caches_tesoreria()
-                    
-                    st.toast("🗑️ Transacción y foto adjunta eliminadas de Tesorería.")
-                    st.rerun()
+    with tab_masiva_elim:
+        st.markdown("##### 🗑️ Eliminación Masiva por Rango de Fechas")
+        st.warning("⚠️ **ATENCIÓN:** Esta acción eliminará múltiples registros a la vez de forma irreversible. Úsala con precaución (ej. para revertir una carga masiva desde Excel que salió mal).")
+        
+        c_m1, c_m2, c_m3 = st.columns([1, 1, 1.5])
+        with c_m1:
+            del_f_inicio = st.date_input("Desde la fecha:", value=date.today(), key="del_inicio")
+        with c_m2:
+            del_f_fin = st.date_input("Hasta la fecha:", value=date.today(), key="del_fin")
+        with c_m3:
+            del_tipo = st.selectbox("Filtrar por Tipo:", ["Ambos (Ingresos y Egresos)", "Solo Ingresos", "Solo Egresos"], key="del_tipo")
+            
+        if not df_mov_global.empty:
+            df_fechas = df_mov_global.copy()
+            df_fechas["fecha_obj"] = pd.to_datetime(df_fechas["fecha"], errors='coerce').dt.date
+            
+            df_a_borrar = df_fechas[
+                (df_fechas["fecha_obj"] >= del_f_inicio) &
+                (df_fechas["fecha_obj"] <= del_f_fin)
+            ]
+            
+            if del_tipo == "Solo Ingresos":
+                df_a_borrar = df_a_borrar[df_a_borrar["tipo"] == "Ingreso"]
+            elif del_tipo == "Solo Egresos":
+                df_a_borrar = df_a_borrar[df_a_borrar["tipo"] == "Egreso"]
+                
+            st.info(f"Registros encontrados en este rango: **{len(df_a_borrar)}**")
+            
+            if not df_a_borrar.empty:
+                st.dataframe(
+                    df_a_borrar[["fecha", "tipo", "comprobante", "monto", "detalle", "fondo"]].style.format({"monto": "S/. {:,.2f}"}), 
+                    use_container_width=True, 
+                    hide_index=True
+                )
+                
+                with st.expander("🚨 Confirmar Eliminación Masiva", expanded=False):
+                    st.error(f"¿Estás absolutamente seguro de eliminar estos {len(df_a_borrar)} registros? Esta acción es irreversible y borrará también las fotos adjuntas en la nube.")
+                    if st.button(f"Sí, eliminar definitivamente los {len(df_a_borrar)} registros", type="primary"):
+                        ids_to_delete = df_a_borrar["id"].tolist()
+                        
+                        # 1. Borrar fotos de la nube
+                        rutas_fotos = []
+                        for _, row in df_a_borrar.iterrows():
+                            url_foto = str(row.get("archivo_foto", ""))
+                            if url_foto and url_foto.startswith("http"):
+                                try:
+                                    ruta_archivo = url_foto.split("archivos_iglesia/")[-1]
+                                    rutas_fotos.append(ruta_archivo)
+                                except:
+                                    pass
+                                    
+                        if rutas_fotos:
+                            try:
+                                core.supabase.storage.from_("archivos_iglesia").remove(rutas_fotos)
+                            except:
+                                pass
+                                
+                        # 2. Borrar de la BD
+                        if ids_to_delete:
+                            placeholders = ",".join(["?"] * len(ids_to_delete))
+                            query = f"DELETE FROM public.movimientos WHERE id IN ({placeholders})"
+                            core.query_db(query, tuple(ids_to_delete))
+                            
+                            core.registrar_log("Tesorería", "Eliminación Masiva", f"Eliminados {len(ids_to_delete)} registros del {del_f_inicio} al {del_f_fin}")
+                            
+                            limpiar_caches_tesoreria()
+                            st.toast(f"🗑️ Se eliminaron {len(ids_to_delete)} registros correctamente.")
+                            st.rerun()
 
 core.mostrar_pie_pagina()
