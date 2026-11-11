@@ -465,6 +465,12 @@ if opcion == "Libro Detallado":
             ]
             filtros_activos.append(f"Texto '{filtro_txt}'")
 
+        # ---------------------------------------------------------
+        # ORDENAR CRONOLÓGICAMENTE (De más antiguo a más reciente)
+        # ---------------------------------------------------------
+        if not df_fil.empty and "fecha" in df_fil.columns:
+            df_fil = df_fil.sort_values(by=["fecha", "id"], ascending=[True, True])
+
         txt_filtros_resumen = ", ".join(filtros_activos) if filtros_activos else "Todos los registros"
 
         tot_ing = float(df_fil[df_fil["tipo"] == "Ingreso"]["monto"].sum()) if not df_fil.empty else 0.0
