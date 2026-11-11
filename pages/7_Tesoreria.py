@@ -71,6 +71,30 @@ def limpiar_caches_tesoreria():
     cargar_movimientos_tesoreria.clear()
     st.cache_data.clear() # Limpia también core.read_db genérico
 
+def generar_comprobante_auto(subcat):
+    """Autogenera un comprobante estilo Factura SUNAT (Serie de 4 caracteres - Correlativo de 6 dígitos)"""
+    # 1. Tomar 4 primeras letras del rubro
+    s_cl = str(subcat).replace(" ", "").upper()
+    # Filtrar caracteres raros, dejar solo letras/números
+    s_cl = ''.join(e for e in s_cl if e.isalnum())
+    pref_s = s_cl[:4] if len(s_cl) >= 4 else s_cl.ljust(4, 'X')
+    
+    prefijo = f"{pref_s}"
+    
+    # 2. Consultar a la BD el último correlativo para esa serie exacta
+    df_u = core.read_db("SELECT comprobante FROM public.movimientos WHERE comprobante LIKE ? ORDER BY id DESC LIMIT 1", (f"{prefijo}-%",))
+    if df_u.empty:
+        return f"{prefijo}-000001"
+    else:
+        try:
+            ult = df_u.iloc[0]["comprobante"]
+            num = int(ult.split("-")[-1])
+            return f"{prefijo}-{num + 1:06d}"
+        except Exception:
+            df_c = core.read_db("SELECT COUNT(*) as t FROM public.movimientos WHERE comprobante LIKE ?", (f"{prefijo}-%",))
+            cant = df_c.iloc[0]["t"] if not df_c.empty else 0
+            return f"{prefijo}-{int(cant) + 1:06d}"
+
 # Alimentamos la memoria principal
 df_mov_global = cargar_movimientos_tesoreria()
 
@@ -687,7 +711,7 @@ elif opcion == "Registrar Movimiento":
         monto = st.number_input("Monto (S/.):", min_value=0.01, step=10.0, format="%.2f")
     with c2:
         medio = st.selectbox("Medio de Pago / Entrega:", core.MEDIOS)
-        comp = st.text_input("Comprobante / N° Recibo / Voucher:", placeholder="Ej. B001-00124 o OP-49210")
+        comp = st.text_input("Comprobante / N° Recibo / Voucher (Opcional):", placeholder="Si lo dejas vacío se autogenerará")
         resp = st.selectbox("Responsable:", resps)
         det = st.text_area("Detalle / Concepto:")
         
@@ -698,11 +722,15 @@ elif opcion == "Registrar Movimiento":
 
     if st.button("💾 Guardar Transacción", type="primary", use_container_width=True):
         
+        comp_final = comp.strip()
+        if not comp_final:
+            comp_final = generar_comprobante_auto(subcat)
+        
         # 1. Proceso de subida de imagen si el usuario la agregó
         url_foto = ""
         if foto_up is not None:
             with st.spinner("Comprimiendo y guardando comprobante en la nube..."):
-                nombre_base = f"Recibo_Tes_{comp.strip().replace(' ', '_')}" if comp.strip() else "Recibo_Tes"
+                nombre_base = f"Recibo_Tes_{comp_final.replace(' ', '_')}"
                 url_foto = core.comprimir_y_subir_foto(foto_up, nombre_base)
 
         # 2. Guardar en Base de datos
@@ -710,13 +738,13 @@ elif opcion == "Registrar Movimiento":
             INSERT INTO public.movimientos 
             (fecha, tipo, categoria, subcategoria, fondo, monto, medio, comprobante, detalle, responsable, archivo_foto, estado_credito)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Cobrado')
-        """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp.strip(), det.strip(), resp, url_foto))
+        """, (str(fecha), tipo_cl, cat, subcat, fondo, round(float(monto), 2), medio, comp_final, det.strip(), resp, url_foto))
         
-        core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp.strip()})")
+        core.registrar_log("Tesorería", "Registro", f"{tipo_cl} S/. {monto:,.2f} - {det.strip()} ({comp_final})")
         
         limpiar_caches_tesoreria()
         
-        st.toast("✅ Movimiento guardado exitosamente en Tesorería.")
+        st.toast(f"✅ Movimiento guardado exitosamente en Tesorería con comprobante {comp_final}.")
         st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -814,7 +842,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                 with c2:
                     e_fondo = st.selectbox("Fondo:", fondos, index=idx_fnd)
                     e_medio = st.selectbox("Medio de Pago:", core.MEDIOS, index=idx_med)
-                    e_comp = st.text_input("Comprobante / N° Recibo / Voucher:", value=str(reg_mov.get("comprobante", "") or ""))
+                    e_comp = st.text_input("Comprobante / N° Recibo / Voucher (Opcional):", value=str(reg_mov.get("comprobante", "") or ""))
                     e_resp = st.selectbox("Responsable:", resps, index=idx_resp)
                     e_det = st.text_area("Detalle / Observación:", value=str(reg_mov.get("detalle", "") or ""))
 
@@ -830,6 +858,11 @@ elif opcion == "⚙️ Modificar o Eliminar":
                 e_foto = st.file_uploader("Actualizar foto (Opcional - Si subes una nueva foto, reemplazará a la actual)", type=["png", "jpg", "jpeg"])
 
                 if st.button("💾 Guardar Cambios en Tesorería", type="primary", use_container_width=True):
+                    
+                    comp_final = e_comp.strip()
+                    if not comp_final:
+                        comp_final = generar_comprobante_auto(e_subcat)
+                        
                     # 1. Conservar foto vieja, a menos que suba una nueva
                     url_final = url_foto_actual
                     if e_foto is not None:
@@ -843,7 +876,7 @@ elif opcion == "⚙️ Modificar o Eliminar":
                             fondo = ?, monto = ?, medio = ?, comprobante = ?,
                             responsable = ?, detalle = ?, archivo_foto = ?
                         WHERE id = ?
-                    """, (str(e_fecha), e_tipo, e_cat.strip(), e_subcat.strip(), e_fondo, round(float(e_monto), 2), e_medio, e_comp.strip(), e_resp, e_det.strip(), url_final, id_mov_sel))
+                    """, (str(e_fecha), e_tipo, e_cat.strip(), e_subcat.strip(), e_fondo, round(float(e_monto), 2), e_medio, comp_final, e_resp, e_det.strip(), url_final, id_mov_sel))
 
                     core.registrar_log("Tesorería", "Edición", f"Actualizado asiento ID #{id_mov_sel} por S/. {e_monto:,.2f}")
                     
